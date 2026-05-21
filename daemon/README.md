@@ -14,10 +14,10 @@ The daemon binds to `127.0.0.1:17891` by default. Override it with:
 PAIRPILOT_BIND_ADDR=127.0.0.1:19000 cargo run
 ```
 
-Incoming posts are logged to stdout as JSONL. To save them to a file:
+Incoming posts are not logged to stdout by default. To enable JSONL capture:
 
 ```sh
-cargo run > captured-posts.jsonl
+PAIRPILOT_LOG_CAPTURED_CONTENT=1 cargo run > captured-posts.jsonl
 ```
 
 Codex app-server summaries are enabled by default. The daemon starts a local
@@ -47,6 +47,7 @@ PAIRPILOT_CODEX_MODEL=gpt-5.3-codex-spark
 PAIRPILOT_CODEX_EFFORT=low
 PAIRPILOT_CODEX_TIMEOUT_MS=8000
 PAIRPILOT_CODEX_CWD=/home/user/dev/pairpilot/public
+PAIRPILOT_LOG_CAPTURED_CONTENT=0
 PAIRPILOT_X_SUMMARY_CACHE_MAX_ENTRIES=10000
 PAIRPILOT_X_SUMMARY_CACHE_TTL_SECS=86400
 ```

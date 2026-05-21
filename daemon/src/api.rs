@@ -16,10 +16,13 @@ use std::{
 };
 use tower_http::cors::{Any, CorsLayer};
 
+const LOG_CAPTURED_CONTENT_ENV: &str = "PAIRPILOT_LOG_CAPTURED_CONTENT";
+
 /// Builds the daemon HTTP router.
 pub fn router() -> Router {
     let state = AppState {
         ai_analyzer: AiAnalyzer::from_env(),
+        log_captured_content: captured_content_logging_enabled(),
     };
 
     Router::new()
@@ -28,6 +31,11 @@ pub fn router() -> Router {
         .route("/v1/x-posts/analyze", post(analyze_x_posts))
         .with_state(state)
         .layer(cors_layer())
+}
+
+/// Returns whether captured content should be emitted to stdout as JSONL.
+pub fn captured_content_logging_enabled() -> bool {
+    env_flag_default(LOG_CAPTURED_CONTENT_ENV, false)
 }
 
 fn cors_layer() -> CorsLayer {
@@ -66,8 +74,10 @@ async fn analyze_batch<T>(
     batch: &AnalysisBatch,
     build_response: impl FnOnce(Vec<ContentDecision>) -> T,
 ) -> Json<T> {
-    if let Err(error) = log_batch_to_stdout(batch) {
-        eprintln!("failed to log captured content: {error}");
+    if state.log_captured_content {
+        if let Err(error) = log_batch_to_stdout(batch) {
+            eprintln!("failed to log captured content: {error}");
+        }
     }
 
     Json(build_response(
@@ -219,4 +229,11 @@ struct HealthResponse {
 #[derive(Clone)]
 struct AppState {
     ai_analyzer: AiAnalyzer,
+    log_captured_content: bool,
+}
+
+fn env_flag_default(name: &str, default: bool) -> bool {
+    std::env::var(name)
+        .map(|value| value != "0" && !value.eq_ignore_ascii_case("false"))
+        .unwrap_or(default)
 }

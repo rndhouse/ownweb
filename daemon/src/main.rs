@@ -24,7 +24,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let listener = TcpListener::bind(addr).await?;
     eprintln!("pairpilot-daemon listening on http://{addr}");
-    eprintln!("pairpilot-daemon logging captured content to stdout as JSONL");
+    if api::captured_content_logging_enabled() {
+        eprintln!("pairpilot-daemon logging captured content to stdout as JSONL");
+    } else {
+        eprintln!("pairpilot-daemon captured content stdout logging disabled");
+    }
 
     axum::serve(listener, api::router())
         .with_graceful_shutdown(shutdown_signal())
