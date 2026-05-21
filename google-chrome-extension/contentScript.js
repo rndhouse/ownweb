@@ -1,8 +1,8 @@
 const TWEET_SELECTOR = 'article[data-testid="tweet"]';
 const TWEET_TEXT_SELECTOR = '[data-testid="tweetText"]';
 const STATUS_LINK_SELECTOR = 'a[href*="/status/"]';
-const MAX_BATCH_SIZE = 10;
-const SCAN_DEBOUNCE_MS = 400;
+const MAX_BATCH_SIZE = 4;
+const SCAN_DEBOUNCE_MS = 200;
 
 let nextGeneratedId = 1;
 let scanTimer = null;

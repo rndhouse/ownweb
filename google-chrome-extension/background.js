@@ -1,7 +1,7 @@
 const DEFAULT_DAEMON_ORIGIN = "http://127.0.0.1:17891";
 const ANALYZE_PATH = "/v1/x-posts/analyze";
-const REQUEST_TIMEOUT_MS = 5000;
-const MAX_POSTS_PER_REQUEST = 20;
+const REQUEST_TIMEOUT_MS = 20000;
+const MAX_POSTS_PER_REQUEST = 8;
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (!message || message.type !== "pairpilot:analyzePosts") {

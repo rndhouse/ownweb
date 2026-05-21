@@ -3,13 +3,7 @@ use crate::core::ContentItem;
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::{
-    fmt,
-    path::Path,
-    process::Stdio,
-    sync::atomic::{AtomicU64, Ordering},
-    time::Duration,
-};
+use std::{fmt, path::Path, process::Stdio, time::Duration};
 use tokio::{
     net::TcpStream,
     process::{Child, Command},
@@ -27,7 +21,6 @@ const DEFAULT_TIMEOUT_MS: u64 = 8000;
 pub struct CodexAppAnalyzer {
     config: CodexAppConfig,
     state: Mutex<CodexAppState>,
-    next_request_id: AtomicU64,
 }
 
 impl CodexAppAnalyzer {
@@ -37,7 +30,6 @@ impl CodexAppAnalyzer {
         Self {
             config,
             state: Mutex::new(CodexAppState::default()),
-            next_request_id: AtomicU64::new(1),
         }
     }
 
@@ -48,61 +40,116 @@ impl CodexAppAnalyzer {
             return Ok(Vec::new());
         }
 
-        timeout(
+        match timeout(
             self.config.request_timeout,
             self.run_x_opinion_turn(prompt_items),
         )
         .await
-        .map_err(|_| CodexAppError::Timeout)?
+        {
+            Ok(Ok(opinions)) => Ok(opinions),
+            Ok(Err(error)) => {
+                self.reset_session().await;
+                Err(error)
+            }
+            Err(_elapsed) => {
+                self.reset_session().await;
+                Err(CodexAppError::Timeout)
+            }
+        }
     }
 
     async fn run_x_opinion_turn(
         &self,
         prompt_items: Vec<PromptItem>,
     ) -> Result<Vec<AiOpinion>, CodexAppError> {
-        let mut session = self.connect_session().await?;
-        session.initialize().await?;
-        let thread_id = session.start_thread(&self.config).await?;
-        session
-            .start_turn(&self.config, &thread_id, prompt_items)
-            .await
-    }
+        let mut state = self.state.lock().await;
+        self.check_child_status(&mut state).await?;
+        self.ensure_session_started(&mut state).await?;
 
-    async fn connect_session(&self) -> Result<CodexAppSession<'_>, CodexAppError> {
-        if let Ok(session) = self.try_connect_session().await {
-            return Ok(session);
+        let thread_id = state
+            .thread_id
+            .clone()
+            .ok_or_else(|| CodexAppError::Protocol("missing reusable Codex thread".into()))?;
+        let session = state
+            .session
+            .as_mut()
+            .ok_or_else(|| CodexAppError::Protocol("missing Codex app-server session".into()))?;
+        let result = session
+            .start_turn(&self.config, &thread_id, prompt_items)
+            .await;
+
+        if result.is_err() {
+            state.session = None;
+            state.thread_id = None;
         }
 
-        self.ensure_server_started().await?;
+        result
+    }
+
+    async fn ensure_session_started(&self, state: &mut CodexAppState) -> Result<(), CodexAppError> {
+        if state.session.is_some() && state.thread_id.is_some() {
+            return Ok(());
+        }
+
+        match self.try_connect_session().await {
+            Ok(mut session) => {
+                session.initialize().await?;
+                let thread_id = session.start_thread(&self.config).await?;
+                state.session = Some(session);
+                state.thread_id = Some(thread_id);
+                return Ok(());
+            }
+            Err(_error) => {}
+        }
+
+        self.ensure_server_started(state).await?;
 
         for _ in 0..30 {
             match self.try_connect_session().await {
-                Ok(session) => return Ok(session),
+                Ok(mut session) => {
+                    session.initialize().await?;
+                    let thread_id = session.start_thread(&self.config).await?;
+                    state.session = Some(session);
+                    state.thread_id = Some(thread_id);
+                    return Ok(());
+                }
                 Err(_error) => sleep(Duration::from_millis(100)).await,
             }
         }
 
-        self.try_connect_session().await
+        let mut session = self.try_connect_session().await?;
+        session.initialize().await?;
+        let thread_id = session.start_thread(&self.config).await?;
+        state.session = Some(session);
+        state.thread_id = Some(thread_id);
+        Ok(())
     }
 
-    async fn try_connect_session(&self) -> Result<CodexAppSession<'_>, CodexAppError> {
+    async fn try_connect_session(&self) -> Result<CodexAppSession, CodexAppError> {
         let (socket, _response) = connect_async(&self.config.ws_url).await?;
         Ok(CodexAppSession {
             socket,
-            next_request_id: &self.next_request_id,
+            next_request_id: 1,
             cwd: self.config.cwd.clone(),
         })
     }
 
-    async fn ensure_server_started(&self) -> Result<(), CodexAppError> {
-        let mut state = self.state.lock().await;
+    async fn check_child_status(&self, state: &mut CodexAppState) -> Result<(), CodexAppError> {
         if let Some(child) = state.child.as_mut() {
             if let Some(status) = child.try_wait()? {
                 eprintln!("codex app-server exited with status {status}; restarting");
                 state.child = None;
-            } else {
-                return Ok(());
+                state.session = None;
+                state.thread_id = None;
             }
+        }
+
+        Ok(())
+    }
+
+    async fn ensure_server_started(&self, state: &mut CodexAppState) -> Result<(), CodexAppError> {
+        if state.child.is_some() {
+            return Ok(());
         }
 
         let child = Command::new("codex")
@@ -116,6 +163,12 @@ impl CodexAppAnalyzer {
 
         state.child = Some(child);
         Ok(())
+    }
+
+    async fn reset_session(&self) {
+        let mut state = self.state.lock().await;
+        state.session = None;
+        state.thread_id = None;
     }
 }
 
@@ -160,15 +213,17 @@ impl CodexAppConfig {
 #[derive(Default)]
 struct CodexAppState {
     child: Option<Child>,
+    session: Option<CodexAppSession>,
+    thread_id: Option<String>,
 }
 
-struct CodexAppSession<'a> {
+struct CodexAppSession {
     socket: WebSocketStream<MaybeTlsStream<TcpStream>>,
-    next_request_id: &'a AtomicU64,
+    next_request_id: u64,
     cwd: String,
 }
 
-impl CodexAppSession<'_> {
+impl CodexAppSession {
     async fn initialize(&mut self) -> Result<(), CodexAppError> {
         self.request(
             "initialize",
@@ -267,7 +322,8 @@ impl CodexAppSession<'_> {
     }
 
     async fn request(&mut self, method: &str, params: Value) -> Result<Value, CodexAppError> {
-        let id = self.next_request_id.fetch_add(1, Ordering::Relaxed);
+        let id = self.next_request_id;
+        self.next_request_id += 1;
         let request = json!({
             "id": id,
             "method": method,

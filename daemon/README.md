@@ -21,9 +21,11 @@ cargo run > captured-posts.jsonl
 ```
 
 Codex app-server opinions are enabled by default. The daemon starts a local
-Codex app-server process when needed, asks for short X/Twitter post opinions,
-and attaches them as `label` decisions. If Codex is unavailable or too slow,
-the daemon falls back to the local placeholder heuristics.
+Codex app-server process when needed, keeps one app-server thread alive across
+requests, asks for short X/Twitter post opinions, and attaches them as `label`
+decisions. Obvious ordinary posts skip Codex and return `keep` immediately. If
+Codex is unavailable or too slow, the daemon falls back to the local placeholder
+heuristics.
 
 Useful environment variables:
 
