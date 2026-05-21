@@ -28,6 +28,10 @@ text or a URL is sent to Codex so the browser view visibly changes. If Codex is
 unavailable or too slow, the daemon returns a visible summary-unavailable label
 for posts that would have been summarized.
 
+Summaries are cached in memory by X status ID plus a normalized text hash. This
+lets the timeline view and single-post view reuse the same AI summary when they
+capture the same post content.
+
 Useful environment variables:
 
 ```sh
@@ -37,6 +41,8 @@ PAIRPILOT_CODEX_MODEL=gpt-5.3-codex-spark
 PAIRPILOT_CODEX_EFFORT=low
 PAIRPILOT_CODEX_TIMEOUT_MS=8000
 PAIRPILOT_CODEX_CWD=/home/user/dev/pairpilot/public
+PAIRPILOT_X_SUMMARY_CACHE_MAX_ENTRIES=10000
+PAIRPILOT_X_SUMMARY_CACHE_TTL_SECS=86400
 ```
 
 To restore the faster filtered mode later, only send suspicious or
