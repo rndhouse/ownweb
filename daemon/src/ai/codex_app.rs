@@ -11,6 +11,7 @@ use tokio::{
     time::{sleep, timeout},
 };
 use tokio_tungstenite::{connect_async, tungstenite::Message, MaybeTlsStream, WebSocketStream};
+use tracing::warn;
 
 const DEFAULT_WS_URL: &str = "ws://127.0.0.1:39177";
 const DEFAULT_MODEL: &str = "gpt-5.3-codex-spark";
@@ -137,7 +138,7 @@ impl CodexAppAnalyzer {
     async fn check_child_status(&self, state: &mut CodexAppState) -> Result<(), CodexAppError> {
         if let Some(child) = state.child.as_mut() {
             if let Some(status) = child.try_wait()? {
-                eprintln!("codex app-server exited with status {status}; restarting");
+                warn!(%status, "codex app-server exited; restarting");
                 state.child = None;
                 state.session = None;
                 state.thread_id = None;

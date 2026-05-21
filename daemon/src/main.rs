@@ -5,6 +5,7 @@ mod sites;
 
 use std::net::SocketAddr;
 use tokio::net::TcpListener;
+use tracing::info;
 use tracing_subscriber::EnvFilter;
 
 const DEFAULT_BIND_ADDR: &str = "127.0.0.1:17891";
@@ -13,9 +14,9 @@ const DEFAULT_BIND_ADDR: &str = "127.0.0.1:17891";
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt()
         .with_env_filter(
-            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("debug")),
         )
-        .with_writer(std::io::stderr)
+        .with_writer(std::io::stdout)
         .init();
 
     let bind_addr =
@@ -23,11 +24,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let addr: SocketAddr = bind_addr.parse()?;
 
     let listener = TcpListener::bind(addr).await?;
-    eprintln!("pairpilot-daemon listening on http://{addr}");
+    info!(%addr, "pairpilot-daemon listening");
     if api::captured_content_logging_enabled() {
-        eprintln!("pairpilot-daemon logging captured content to stdout as JSONL");
+        info!("pairpilot-daemon captured content logging enabled");
     } else {
-        eprintln!("pairpilot-daemon captured content stdout logging disabled");
+        info!("pairpilot-daemon captured content logging disabled");
     }
 
     axum::serve(listener, api::router())

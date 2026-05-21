@@ -10,11 +10,9 @@ use axum::{
     Json, Router,
 };
 use serde::{Deserialize, Serialize};
-use std::{
-    io::{self, Write},
-    time::{Duration, SystemTime, UNIX_EPOCH},
-};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tower_http::cors::{Any, CorsLayer};
+use tracing::{info, warn};
 
 const LOG_CAPTURED_CONTENT_ENV: &str = "PAIRPILOT_LOG_CAPTURED_CONTENT";
 
@@ -33,7 +31,7 @@ pub fn router() -> Router {
         .layer(cors_layer())
 }
 
-/// Returns whether captured content should be emitted to stdout as JSONL.
+/// Returns whether captured content should be emitted as structured log events.
 pub fn captured_content_logging_enabled() -> bool {
     env_flag_default(LOG_CAPTURED_CONTENT_ENV, false)
 }
@@ -75,9 +73,7 @@ async fn analyze_batch<T>(
     build_response: impl FnOnce(Vec<ContentDecision>) -> T,
 ) -> Json<T> {
     if state.log_captured_content {
-        if let Err(error) = log_batch_to_stdout(batch) {
-            eprintln!("failed to log captured content: {error}");
-        }
+        log_captured_batch(batch);
     }
 
     Json(build_response(
@@ -85,17 +81,15 @@ async fn analyze_batch<T>(
     ))
 }
 
-fn log_batch_to_stdout(batch: &AnalysisBatch) -> io::Result<()> {
+fn log_captured_batch(batch: &AnalysisBatch) {
     if batch.items.is_empty() {
-        return Ok(());
+        return;
     }
 
     let received_at_unix_ms = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis();
-    let stdout = io::stdout();
-    let mut handle = stdout.lock();
 
     for item in &batch.items {
         let captured_item = CapturedItem {
@@ -103,12 +97,23 @@ fn log_batch_to_stdout(batch: &AnalysisBatch) -> io::Result<()> {
             source: batch.source.as_str(),
             item,
         };
-        serde_json::to_writer(&mut handle, &captured_item)
-            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-        handle.write_all(b"\n")?;
+        match serde_json::to_string(&captured_item) {
+            Ok(captured_json) => {
+                info!(
+                    target: "pairpilot_daemon::captured_content",
+                    source = batch.source.as_str(),
+                    client_id = item.client_id.as_str(),
+                    content_id = item.content_id.as_deref(),
+                    received_at_unix_ms,
+                    captured = %captured_json,
+                    "captured content"
+                );
+            }
+            Err(error) => {
+                warn!(%error, "failed to serialize captured content for logging");
+            }
+        }
     }
-
-    handle.flush()
 }
 
 /// Request for the generic content analysis endpoint.

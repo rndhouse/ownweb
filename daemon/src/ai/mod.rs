@@ -8,6 +8,7 @@ use std::{
     time::Instant,
 };
 use summary_cache::SummaryCache;
+use tracing::warn;
 
 /// Shared AI analyzer used by site handlers.
 #[derive(Clone)]
@@ -88,7 +89,7 @@ impl AiAnalyzer {
                 Some(opinions)
             }
             Err(error) => {
-                eprintln!("codex app-server opinion unavailable: {error}");
+                warn!(%error, "codex app-server opinion unavailable");
                 (!opinions.is_empty()).then_some(opinions)
             }
         }

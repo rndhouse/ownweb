@@ -14,10 +14,13 @@ The daemon binds to `127.0.0.1:17891` by default. Override it with:
 PAIRPILOT_BIND_ADDR=127.0.0.1:19000 cargo run
 ```
 
-Incoming posts are not logged to stdout by default. To enable JSONL capture:
+Daemon output goes through structured logs on stdout. The default log level is
+`debug`; override it with `RUST_LOG`.
+
+Incoming posts are not logged by default. To enable captured-content log events:
 
 ```sh
-PAIRPILOT_LOG_CAPTURED_CONTENT=1 cargo run > captured-posts.jsonl
+PAIRPILOT_LOG_CAPTURED_CONTENT=1 cargo run
 ```
 
 Codex app-server summaries are enabled by default. The daemon starts a local
@@ -32,10 +35,10 @@ Summaries are cached in memory by X status ID plus a normalized text hash. This
 lets the timeline view and single-post view reuse the same AI summary when they
 capture the same post content.
 
-Cache hits are logged at debug level on stderr:
+Cache hits are logged at debug level on stdout:
 
 ```sh
-RUST_LOG=pairpilot_daemon::summary_cache=debug cargo run
+cargo run
 ```
 
 Useful environment variables:
@@ -50,6 +53,7 @@ PAIRPILOT_CODEX_CWD=/home/user/dev/pairpilot/public
 PAIRPILOT_LOG_CAPTURED_CONTENT=0
 PAIRPILOT_X_SUMMARY_CACHE_MAX_ENTRIES=10000
 PAIRPILOT_X_SUMMARY_CACHE_TTL_SECS=86400
+RUST_LOG=debug
 ```
 
 To restore the faster filtered mode later, only send suspicious or
