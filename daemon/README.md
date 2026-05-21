@@ -20,12 +20,13 @@ Incoming posts are logged to stdout as JSONL. To save them to a file:
 cargo run > captured-posts.jsonl
 ```
 
-Codex app-server opinions are enabled by default. The daemon starts a local
+Codex app-server summaries are enabled by default. The daemon starts a local
 Codex app-server process when needed, keeps one app-server thread alive across
-requests, asks for short X/Twitter post opinions, and attaches them as `label`
-decisions. Obvious ordinary posts skip Codex and return `keep` immediately. If
-Codex is unavailable or too slow, the daemon falls back to the local placeholder
-heuristics.
+requests, asks for short X/Twitter post summaries, and attaches them as
+`label` decisions next to posts. During development, every captured X post with
+text or a URL is sent to Codex so the browser view visibly changes. If Codex is
+unavailable or too slow, the daemon returns a visible summary-unavailable label
+for posts that would have been summarized.
 
 Useful environment variables:
 
@@ -38,11 +39,11 @@ PAIRPILOT_CODEX_TIMEOUT_MS=8000
 PAIRPILOT_CODEX_CWD=/home/user/dev/pairpilot/public
 ```
 
-For browser-loop testing, force every non-empty X post through Codex so each
-post gets a visible label:
+To restore the faster filtered mode later, only send suspicious or
+promotion-like posts through Codex:
 
 ```sh
-PAIRPILOT_X_REVIEW_ALL=1 cargo run
+PAIRPILOT_X_REVIEW_ALL=0 cargo run
 ```
 
 ## Endpoints

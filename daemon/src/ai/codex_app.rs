@@ -258,8 +258,8 @@ impl CodexAppSession {
                     "sandbox": "read-only",
                     "model": config.model,
                     "serviceTier": null,
-                    "baseInstructions": "You classify X/Twitter posts for Pairpilot. Return only the requested JSON.",
-                    "developerInstructions": "Return concise valid JSON. Do not use tools. Do not run commands. Keep each opinion under 90 characters.",
+                    "baseInstructions": "You summarize X/Twitter posts for Pairpilot. Return only the requested JSON.",
+                    "developerInstructions": "Return concise valid JSON. Do not use tools. Do not run commands. Keep each summary under 120 characters.",
                     "ephemeral": true,
                     "experimentalRawEvents": false,
                     "persistExtendedHistory": false
@@ -450,7 +450,13 @@ struct OpinionItem {
 fn prompt_items(items: &[ContentItem]) -> Vec<PromptItem> {
     items
         .iter()
-        .filter(|item| !item.text.trim().is_empty())
+        .filter(|item| {
+            !item.text.trim().is_empty()
+                || item
+                    .url
+                    .as_deref()
+                    .is_some_and(|url| !url.trim().is_empty())
+        })
         .map(|item| PromptItem {
             client_id: item.client_id.clone(),
             author: item.author.clone(),
@@ -463,7 +469,7 @@ fn prompt_items(items: &[ContentItem]) -> Vec<PromptItem> {
 fn build_prompt(items: &[PromptItem]) -> Result<String, CodexAppError> {
     let items_json = serde_json::to_string(items)?;
     Ok(format!(
-        "For each X post below, give a short moderation opinion. Always return one opinion for every clientId. Use plain language. Do not hide, dim, or replace content. Return only JSON matching the schema. Posts JSON: {items_json}"
+        "For each X post below, write a short summary or your understanding of what the author is saying. Always return one item for every clientId. Use plain language. If text is empty, summarize only what can be inferred from the URL or say that no text was captured. Do not hide, dim, or replace content. Return only JSON matching the schema. Posts JSON: {items_json}"
     ))
 }
 
