@@ -38,6 +38,13 @@ PAIRPILOT_CODEX_TIMEOUT_MS=8000
 PAIRPILOT_CODEX_CWD=/home/user/dev/pairpilot/public
 ```
 
+For browser-loop testing, force every non-empty X post through Codex so each
+post gets a visible label:
+
+```sh
+PAIRPILOT_X_REVIEW_ALL=1 cargo run
+```
+
 ## Endpoints
 
 - `GET /health`
