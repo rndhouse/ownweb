@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Pairpilot X Filter Options</title>
+    <link rel="stylesheet" href="options.css">
+  </head>
+  <body>
+    <main>
+      <h1>Pairpilot X Filter</h1>
+      <label for="daemonOrigin">Daemon URL</label>
+      <div class="row">
+        <input id="daemonOrigin" type="url" spellcheck="false" value="http://127.0.0.1:17891">
+        <button id="saveButton" type="button">Save</button>
+        <button id="testButton" type="button">Test</button>
+      </div>
+      <p id="status" role="status"></p>
+    </main>
+    <script src="options.js"></script>
+  </body>
+</html>

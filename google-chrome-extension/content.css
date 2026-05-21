@@ -1,0 +1,31 @@
+.pairpilot-hidden {
+  display: none !important;
+}
+
+.pairpilot-dimmed {
+  opacity: 0.38 !important;
+  transition: opacity 160ms ease;
+}
+
+.pairpilot-dimmed:hover,
+.pairpilot-dimmed:focus-within {
+  opacity: 0.86 !important;
+}
+
+.pairpilot-badge {
+  display: inline-flex;
+  align-items: center;
+  max-width: calc(100% - 32px);
+  margin: 8px 16px 0;
+  padding: 4px 8px;
+  border: 1px solid #c58b00;
+  border-radius: 6px;
+  background: #fff2bf;
+  color: #241a00;
+  font: 12px/1.35 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  overflow-wrap: anywhere;
+}
+
+.pairpilot-replaced [data-testid="tweetText"] {
+  color: #536471 !important;
+}
