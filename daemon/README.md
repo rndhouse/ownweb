@@ -23,6 +23,15 @@ cargo run > captured-posts.jsonl
 ## Endpoints
 
 - `GET /health`
+- `POST /v1/content/analyze`
 - `POST /v1/x-posts/analyze`
 
-The analyzer currently uses simple placeholder heuristics. Replace `classify_post` in `src/main.rs` with the real filtering logic.
+`/v1/content/analyze` is the generic endpoint. It accepts a `source` and
+normalized `items`, then dispatches to the matching site module.
+
+`/v1/x-posts/analyze` is the compatibility endpoint used by the current Chrome
+extension. It maps X post payloads into the generic content model before
+analysis.
+
+Site-specific logic lives under `src/sites/`. The X analyzer currently uses
+simple placeholder heuristics.
