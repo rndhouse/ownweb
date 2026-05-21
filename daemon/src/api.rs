@@ -2,6 +2,7 @@ use crate::{
     ai::AiAnalyzer,
     core::{AnalysisBatch, ContentDecision, ContentItem},
     sites,
+    storage::{ContentStore, StorageError},
 };
 use axum::{
     extract::State,
@@ -17,18 +18,19 @@ use tracing::{info, warn};
 const LOG_CAPTURED_CONTENT_ENV: &str = "PAIRPILOT_LOG_CAPTURED_CONTENT";
 
 /// Builds the daemon HTTP router.
-pub fn router() -> Router {
+pub fn router() -> Result<Router, StorageError> {
     let state = AppState {
         ai_analyzer: AiAnalyzer::from_env(),
+        content_store: ContentStore::from_env()?,
         log_captured_content: captured_content_logging_enabled(),
     };
 
-    Router::new()
+    Ok(Router::new()
         .route("/health", get(health))
         .route("/v1/content/analyze", post(analyze_content))
         .route("/v1/x-posts/analyze", post(analyze_x_posts))
         .with_state(state)
-        .layer(cors_layer())
+        .layer(cors_layer()))
 }
 
 /// Returns whether captured content should be emitted as structured log events.
@@ -74,6 +76,9 @@ async fn analyze_batch<T>(
 ) -> Json<T> {
     if state.log_captured_content {
         log_captured_batch(batch);
+    }
+    if let Err(error) = state.content_store.record_batch(batch) {
+        warn!(%error, "failed to store captured content");
     }
 
     Json(build_response(
@@ -234,6 +239,7 @@ struct HealthResponse {
 #[derive(Clone)]
 struct AppState {
     ai_analyzer: AiAnalyzer,
+    content_store: ContentStore,
     log_captured_content: bool,
 }
 

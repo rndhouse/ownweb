@@ -2,6 +2,7 @@ mod ai;
 mod api;
 mod core;
 mod sites;
+mod storage;
 
 use std::net::SocketAddr;
 use tokio::net::TcpListener;
@@ -31,7 +32,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         info!("pairpilot-daemon captured content logging disabled");
     }
 
-    axum::serve(listener, api::router())
+    axum::serve(listener, api::router()?)
         .with_graceful_shutdown(shutdown_signal())
         .await?;
 
