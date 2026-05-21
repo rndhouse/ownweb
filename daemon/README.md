@@ -32,6 +32,12 @@ Summaries are cached in memory by X status ID plus a normalized text hash. This
 lets the timeline view and single-post view reuse the same AI summary when they
 capture the same post content.
 
+Cache hits are logged at debug level on stderr:
+
+```sh
+RUST_LOG=pairpilot_daemon::summary_cache=debug cargo run
+```
+
 Useful environment variables:
 
 ```sh

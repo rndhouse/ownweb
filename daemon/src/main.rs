@@ -12,7 +12,10 @@ const DEFAULT_BIND_ADDR: &str = "127.0.0.1:17891";
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::from_default_env().add_directive("info".parse()?))
+        .with_env_filter(
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
+        )
+        .with_writer(std::io::stderr)
         .init();
 
     let bind_addr =

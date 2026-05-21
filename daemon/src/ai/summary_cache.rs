@@ -3,6 +3,7 @@ use std::{
     collections::HashMap,
     time::{Duration, Instant},
 };
+use tracing::debug;
 
 const DEFAULT_MAX_ENTRIES: usize = 10_000;
 const DEFAULT_TTL_SECS: u64 = 24 * 60 * 60;
@@ -49,6 +50,14 @@ impl SummaryCache {
 
         let entry = self.entries.get_mut(&key)?;
         entry.last_used = now;
+
+        debug!(
+            target: "pairpilot_daemon::summary_cache",
+            client_id = %item.client_id,
+            content_id = item.content_id.as_deref(),
+            cache_key = %key,
+            "X summary cache hit"
+        );
 
         Some(CachedSummaryHit {
             client_id: item.client_id.clone(),
