@@ -20,6 +20,22 @@ Incoming posts are logged to stdout as JSONL. To save them to a file:
 cargo run > captured-posts.jsonl
 ```
 
+Codex app-server opinions are enabled by default. The daemon starts a local
+Codex app-server process when needed, asks for short X/Twitter post opinions,
+and attaches them as `label` decisions. If Codex is unavailable or too slow,
+the daemon falls back to the local placeholder heuristics.
+
+Useful environment variables:
+
+```sh
+PAIRPILOT_CODEX_APP_ENABLED=0
+PAIRPILOT_CODEX_APP_WS=ws://127.0.0.1:39177
+PAIRPILOT_CODEX_MODEL=gpt-5.3-codex-spark
+PAIRPILOT_CODEX_EFFORT=low
+PAIRPILOT_CODEX_TIMEOUT_MS=8000
+PAIRPILOT_CODEX_CWD=/home/user/dev/pairpilot/public
+```
+
 ## Endpoints
 
 - `GET /health`

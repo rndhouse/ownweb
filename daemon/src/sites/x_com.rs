@@ -1,7 +1,24 @@
-use crate::core::{ContentDecision, ContentItem};
+use crate::{
+    ai::AiAnalyzer,
+    core::{ContentDecision, ContentItem},
+};
 
 /// Analyzes X/Twitter timeline content.
-pub fn analyze(items: &[ContentItem]) -> Vec<ContentDecision> {
+pub async fn analyze(items: &[ContentItem], ai_analyzer: &AiAnalyzer) -> Vec<ContentDecision> {
+    if let Some(opinions) = ai_analyzer.x_opinions(items).await {
+        return opinions
+            .into_iter()
+            .map(|opinion| {
+                ContentDecision::label(
+                    opinion.client_id,
+                    format!("Codex: {}", opinion.opinion),
+                    "Codex app-server opinion",
+                    opinion.confidence,
+                )
+            })
+            .collect();
+    }
+
     items.iter().map(classify_item).collect()
 }
 

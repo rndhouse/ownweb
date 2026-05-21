@@ -1,8 +1,10 @@
 use crate::{
+    ai::AiAnalyzer,
     core::{AnalysisBatch, ContentDecision, ContentItem},
     sites,
 };
 use axum::{
+    extract::State,
     http::{header, Method},
     routing::{get, post},
     Json, Router,
@@ -16,10 +18,15 @@ use tower_http::cors::{Any, CorsLayer};
 
 /// Builds the daemon HTTP router.
 pub fn router() -> Router {
+    let state = AppState {
+        ai_analyzer: AiAnalyzer::from_env(),
+    };
+
     Router::new()
         .route("/health", get(health))
         .route("/v1/content/analyze", post(analyze_content))
         .route("/v1/x-posts/analyze", post(analyze_x_posts))
+        .with_state(state)
         .layer(cors_layer())
 }
 
@@ -39,18 +46,23 @@ async fn health() -> Json<HealthResponse> {
 }
 
 async fn analyze_content(
+    State(state): State<AppState>,
     Json(request): Json<ContentAnalyzeRequest>,
 ) -> Json<ContentAnalyzeResponse> {
     let batch = request.into_batch();
-    analyze_batch(&batch, ContentAnalyzeResponse::new)
+    analyze_batch(&state, &batch, ContentAnalyzeResponse::new).await
 }
 
-async fn analyze_x_posts(Json(request): Json<XPostsAnalyzeRequest>) -> Json<XPostsAnalyzeResponse> {
+async fn analyze_x_posts(
+    State(state): State<AppState>,
+    Json(request): Json<XPostsAnalyzeRequest>,
+) -> Json<XPostsAnalyzeResponse> {
     let batch = request.into_batch();
-    analyze_batch(&batch, XPostsAnalyzeResponse::new)
+    analyze_batch(&state, &batch, XPostsAnalyzeResponse::new).await
 }
 
-fn analyze_batch<T>(
+async fn analyze_batch<T>(
+    state: &AppState,
     batch: &AnalysisBatch,
     build_response: impl FnOnce(Vec<ContentDecision>) -> T,
 ) -> Json<T> {
@@ -58,7 +70,9 @@ fn analyze_batch<T>(
         eprintln!("failed to log captured content: {error}");
     }
 
-    Json(build_response(sites::analyze(batch)))
+    Json(build_response(
+        sites::analyze(batch, &state.ai_analyzer).await,
+    ))
 }
 
 fn log_batch_to_stdout(batch: &AnalysisBatch) -> io::Result<()> {
@@ -200,4 +214,9 @@ struct CapturedItem<'a> {
 struct HealthResponse {
     ok: bool,
     service: &'static str,
+}
+
+#[derive(Clone)]
+struct AppState {
+    ai_analyzer: AiAnalyzer,
 }

@@ -1,3 +1,4 @@
+mod ai;
 mod api;
 mod core;
 mod sites;

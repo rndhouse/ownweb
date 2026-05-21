@@ -130,4 +130,21 @@ impl ContentDecision {
             confidence: Some(confidence),
         }
     }
+
+    /// Creates a decision that attaches a label to content.
+    pub fn label(
+        client_id: impl Into<String>,
+        label: impl Into<String>,
+        reason: impl Into<String>,
+        confidence: f32,
+    ) -> Self {
+        Self {
+            client_id: client_id.into(),
+            action: DecisionAction::Label,
+            label: Some(label.into()),
+            reason: Some(reason.into()),
+            replacement_text: None,
+            confidence: Some(confidence),
+        }
+    }
 }

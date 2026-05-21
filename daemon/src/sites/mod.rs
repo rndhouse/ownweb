@@ -1,11 +1,14 @@
-use crate::core::{AnalysisBatch, ContentDecision};
+use crate::{
+    ai::AiAnalyzer,
+    core::{AnalysisBatch, ContentDecision},
+};
 
 pub mod x_com;
 
 /// Dispatches an analysis batch to the matching site handler.
-pub fn analyze(batch: &AnalysisBatch) -> Vec<ContentDecision> {
+pub async fn analyze(batch: &AnalysisBatch, ai_analyzer: &AiAnalyzer) -> Vec<ContentDecision> {
     match normalize_source(&batch.source).as_str() {
-        "x.com" | "twitter.com" => x_com::analyze(&batch.items),
+        "x.com" | "twitter.com" => x_com::analyze(&batch.items, ai_analyzer).await,
         _ => keep_all(batch),
     }
 }
