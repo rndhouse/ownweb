@@ -3,12 +3,14 @@ mod x_com;
 use crate::core::AnalysisBatch;
 use std::{
     fmt,
+    io::ErrorKind,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
 };
-use tracing::info;
+use tracing::{info, warn};
 
 const DATA_DIR_ENV: &str = "OWNWEB_DATA_DIR";
+const RESET_X_DB_ENV: &str = "OWNWEB_X_RESET_DB";
 const DB_FILE_NAME: &str = "db.sqlite";
 
 /// Filesystem-backed storage for content encountered by the daemon.
@@ -25,6 +27,16 @@ impl ContentStore {
 
     fn with_data_dir(data_dir: impl AsRef<Path>) -> Result<Self> {
         let x_com_path = site_db_path(data_dir.as_ref(), x_com::SITE_DIR);
+        if env_flag_default(RESET_X_DB_ENV, false) {
+            reset_sqlite_db_files(&x_com_path)?;
+            warn!(
+                site = x_com::SITE_DIR,
+                path = %x_com_path.display(),
+                env = RESET_X_DB_ENV,
+                "reset site storage database before opening"
+            );
+        }
+
         let x_com = x_com::Store::open(&x_com_path)?;
         log_site_db_opened(x_com::SITE_DIR, &x_com_path);
 
@@ -72,6 +84,35 @@ fn non_empty_env(name: &str) -> Option<String> {
         .ok()
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
+}
+
+fn env_flag_default(name: &str, default: bool) -> bool {
+    std::env::var(name)
+        .map(|value| value != "0" && !value.eq_ignore_ascii_case("false"))
+        .unwrap_or(default)
+}
+
+fn reset_sqlite_db_files(path: &Path) -> Result<()> {
+    remove_file_if_exists(path)?;
+    remove_file_if_exists(&sqlite_sidecar_path(path, "-wal"))?;
+    remove_file_if_exists(&sqlite_sidecar_path(path, "-shm"))?;
+    Ok(())
+}
+
+fn remove_file_if_exists(path: &Path) -> Result<()> {
+    match std::fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error.into()),
+    }
+}
+
+fn sqlite_sidecar_path(path: &Path, suffix: &str) -> PathBuf {
+    let Some(file_name) = path.file_name() else {
+        return PathBuf::from(format!("{}{suffix}", path.display()));
+    };
+
+    path.with_file_name(format!("{}{suffix}", file_name.to_string_lossy()))
 }
 
 type Result<T> = std::result::Result<T, StorageError>;
@@ -174,6 +215,26 @@ mod tests {
             )
             .expect("tweet should exist");
         assert_eq!(text, "hello");
+
+        let _ = std::fs::remove_dir_all(data_dir);
+    }
+
+    #[test]
+    fn reset_sqlite_db_files_removes_database_and_wal_sidecars() {
+        let data_dir = temp_data_dir("reset-sqlite-files");
+        let db_path = data_dir.join("x.com/db.sqlite");
+        std::fs::create_dir_all(db_path.parent().unwrap()).expect("parent should be created");
+        std::fs::write(&db_path, b"db").expect("db should be written");
+        std::fs::write(sqlite_sidecar_path(&db_path, "-wal"), b"wal")
+            .expect("wal should be written");
+        std::fs::write(sqlite_sidecar_path(&db_path, "-shm"), b"shm")
+            .expect("shm should be written");
+
+        reset_sqlite_db_files(&db_path).expect("reset should remove files");
+
+        assert!(!db_path.exists());
+        assert!(!sqlite_sidecar_path(&db_path, "-wal").exists());
+        assert!(!sqlite_sidecar_path(&db_path, "-shm").exists());
 
         let _ = std::fs::remove_dir_all(data_dir);
     }

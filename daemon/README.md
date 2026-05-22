@@ -34,6 +34,15 @@ Override the root data directory with `OWNWEB_DATA_DIR`. The daemon uses
 bundled SQLite through Rust dependencies, so no separate SQLite service or
 system install is required.
 
+For development, reset the X database on startup with:
+
+```sh
+OWNWEB_X_RESET_DB=1 cargo run
+```
+
+This removes `db.sqlite`, `db.sqlite-wal`, and `db.sqlite-shm` for `x.com`
+before the daemon opens storage.
+
 Codex app-server summaries are enabled by default. The daemon starts a local
 Codex app-server process when needed, keeps one app-server thread alive across
 requests, asks for short X/Twitter post summaries, and attaches them as
@@ -63,6 +72,7 @@ OWNWEB_CODEX_TIMEOUT_MS=8000
 OWNWEB_CODEX_CWD=/home/user/dev/ownweb/public
 OWNWEB_DATA_DIR=/home/user/.local/share/ownweb
 OWNWEB_LOG_CAPTURED_CONTENT=0
+OWNWEB_X_RESET_DB=0
 OWNWEB_X_SUMMARY_CACHE_MAX_ENTRIES=10000
 OWNWEB_X_SUMMARY_CACHE_TTL_SECS=86400
 RUST_LOG=debug
