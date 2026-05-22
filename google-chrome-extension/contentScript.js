@@ -462,10 +462,12 @@ function insertFeedbackControl(element, command) {
   const clientId = command.target && command.target.clientId
     ? command.target.clientId
     : getClientId(element);
+  const isSubjectPost = isSubjectPostElement(element, clientId);
   const existingButton = element.querySelector(
     `.ownweb-feedback-button[data-ownweb-client-id="${cssEscape(clientId)}"]`
   );
   if (existingButton) {
+    existingButton.classList.toggle("ownweb-feedback-button--subject", isSubjectPost);
     return;
   }
 
@@ -477,7 +479,7 @@ function insertFeedbackControl(element, command) {
   const likeSlot = findActionSlot(actionBar, "[data-testid='like'], [data-testid='unlike']");
   const slot = createFeedbackSlot(likeSlot || actionBar.firstElementChild);
   slot.dataset.ownwebUi = "true";
-  slot.append(createFeedbackButton(clientId, command.label || "Hide this post"));
+  slot.append(createFeedbackButton(clientId, command.label || "Hide this post", isSubjectPost));
 
   if (likeSlot && likeSlot.parentElement === actionBar && likeSlot.nextSibling) {
     actionBar.insertBefore(slot, likeSlot.nextSibling);
@@ -501,10 +503,11 @@ function createFeedbackSlot(referenceSlot) {
   return slot;
 }
 
-function createFeedbackButton(clientId, label) {
+function createFeedbackButton(clientId, label, isSubjectPost) {
   const button = document.createElement("button");
   button.type = "button";
   button.className = "ownweb-feedback-button";
+  button.classList.toggle("ownweb-feedback-button--subject", isSubjectPost);
   button.dataset.ownwebUi = "true";
   button.dataset.ownwebClientId = clientId;
   button.dataset.ownwebFeedback = "thumbsDown";
@@ -512,6 +515,37 @@ function createFeedbackButton(clientId, label) {
   button.setAttribute("aria-label", label);
   button.append(createThumbsDownIcon());
   return button;
+}
+
+function isSubjectPostElement(element, clientId) {
+  const pageStatusId = statusIdFromUrl(location.href);
+  if (!pageStatusId) {
+    return false;
+  }
+
+  const snapshot = snapshotsByClientId.get(clientId);
+  if (snapshot && snapshot.links.some((link) => statusIdFromUrl(link.href) === pageStatusId)) {
+    return true;
+  }
+
+  const postRoot = element.closest("article, [role='article'], [data-testid='tweet']");
+  const firstPost = firstVisiblePostInMain();
+  return postRoot !== null && postRoot === firstPost;
+}
+
+function firstVisiblePostInMain() {
+  const main = document.querySelector("main");
+  if (!main) {
+    return null;
+  }
+
+  return Array.from(main.querySelectorAll("article, [role='article'], [data-testid='tweet']"))
+    .filter(isVisibleRegion)[0] || null;
+}
+
+function statusIdFromUrl(value) {
+  const match = String(value || "").match(/\/status\/(\d+)/);
+  return match ? match[1] : null;
 }
 
 function createThumbsDownIcon() {

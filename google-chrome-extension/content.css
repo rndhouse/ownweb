@@ -56,6 +56,10 @@
   transform: translateY(4px);
 }
 
+.ownweb-feedback-button--subject {
+  transform: translateY(5px);
+}
+
 .ownweb-feedback-button:hover,
 .ownweb-feedback-button:focus-visible {
   background: rgba(244, 33, 46, 0.1);
