@@ -135,11 +135,7 @@ fn cache_key(item: &ContentItem) -> Option<String> {
     let normalized_text = normalize_text(&item.text);
 
     if let Some(content_id) = stable_content_id(item) {
-        return Some(format!(
-            "x:v1:id:{}:text:{:016x}",
-            content_id,
-            stable_hash(&normalized_text)
-        ));
+        return Some(format!("x:v2:id:{content_id}"));
     }
 
     let author = item.author.as_deref().unwrap_or_default().trim();
@@ -265,7 +261,7 @@ mod tests {
     }
 
     #[test]
-    fn cache_key_ignores_whitespace_variation() {
+    fn content_id_cache_ignores_whitespace_variation() {
         let now = Instant::now();
         let mut cache = SummaryCache::new(10, Duration::from_secs(60));
         cache.insert(
@@ -281,7 +277,7 @@ mod tests {
     }
 
     #[test]
-    fn cache_key_changes_when_text_changes() {
+    fn content_id_cache_ignores_text_changes() {
         let now = Instant::now();
         let mut cache = SummaryCache::new(10, Duration::from_secs(60));
         cache.insert(
@@ -293,7 +289,18 @@ mod tests {
 
         assert!(cache
             .get(&item("second", Some("123"), "different text"), now)
-            .is_none());
+            .is_some());
+    }
+
+    #[test]
+    fn status_url_cache_ignores_text_changes() {
+        let now = Instant::now();
+        let mut cache = SummaryCache::new(10, Duration::from_secs(60));
+        cache.insert(&item("first", None, "hello world"), "summary", 0.7, now);
+
+        assert!(cache
+            .get(&item("second", None, "different text"), now)
+            .is_some());
     }
 
     #[test]
