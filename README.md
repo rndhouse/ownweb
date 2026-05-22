@@ -6,4 +6,6 @@ OwnWeb helps you take sovereignty over the web you consume. It sends page conten
 
 OwnWeb currently supports X.com posts, adding a local dislike control so you can hide posts and teach the daemon what you do not want to see.
 
-<img src="assets/x-dislike-button.png" alt="OwnWeb dislike button on an X.com post" width="720">
+<p align="center">
+  <img src="assets/x-dislike-button.png" alt="OwnWeb dislike button on an X.com post" width="520">
+</p>
