@@ -38,8 +38,8 @@ pub fn router() -> Result<Router, StorageError> {
         .route("/v1/events", get(events_ws))
         .route("/v1/dom/analyze", post(analyze_dom))
         .route("/v1/dom/feedback", post(dom_feedback))
-        .route("/v1/sites/x.com/dislikes", get(x_dislikes))
-        .route("/v1/sites/x.com/rules", get(x_rules))
+        .route("/v1/dislikes", get(dislikes))
+        .route("/v1/rules", get(rules))
         .with_state(state)
         .layer(cors_layer()))
 }
@@ -104,24 +104,27 @@ async fn dom_feedback(
     })
 }
 
-async fn x_dislikes(
+async fn dislikes(
     State(state): State<AppState>,
-    Query(query): Query<XDislikesQuery>,
-) -> Result<Json<XDislikesResponse>, ApiError> {
+    Query(query): Query<DislikesQuery>,
+) -> Result<Json<DislikesResponse>, ApiError> {
+    let site = SiteScope::from_param(query.site.as_deref())?;
     let active = query.active.or(Some(true));
     let limit = query
         .limit
         .unwrap_or(DEFAULT_DISLIKE_LIMIT)
         .min(MAX_DISLIKE_LIMIT);
     let offset = query.offset.unwrap_or(0);
-    let page = state.content_store.x_dislikes(XDislikeQuery {
-        active,
-        limit,
-        offset,
-    })?;
+    let page = match site {
+        SiteScope::XCom => state.content_store.x_dislikes(XDislikeQuery {
+            active,
+            limit,
+            offset,
+        })?,
+    };
 
-    Ok(Json(XDislikesResponse {
-        site: "x.com",
+    Ok(Json(DislikesResponse {
+        site: site.as_str(),
         active,
         total_matching: page.total_matching,
         limit: page.limit,
@@ -130,10 +133,11 @@ async fn x_dislikes(
     }))
 }
 
-async fn x_rules(
+async fn rules(
     State(state): State<AppState>,
     Query(query): Query<RulesQuery>,
 ) -> Result<Json<RulesResponse>, ApiError> {
+    let site = SiteScope::from_param(query.site.as_deref())?;
     let status = query
         .status
         .map(|status| status.trim().to_string())
@@ -143,14 +147,16 @@ async fn x_rules(
         .unwrap_or(DEFAULT_RULE_LIMIT)
         .min(MAX_RULE_LIMIT);
     let offset = query.offset.unwrap_or(0);
-    let page = state.content_store.x_rules(RuleQuery {
-        status: status.clone(),
-        limit,
-        offset,
-    })?;
+    let page = match site {
+        SiteScope::XCom => state.content_store.x_rules(RuleQuery {
+            status: status.clone(),
+            limit,
+            offset,
+        })?,
+    };
 
     Ok(Json(RulesResponse {
-        site: "x.com",
+        site: site.as_str(),
         status,
         total_matching: page.total_matching,
         limit: page.limit,
@@ -355,7 +361,9 @@ pub struct DomFeedbackResponse {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct XDislikesQuery {
+struct DislikesQuery {
+    /// Site scope for the request, such as `x.com`.
+    site: Option<String>,
     /// Filter by current active dislike state. Defaults to active dislikes.
     active: Option<bool>,
     /// Maximum number of rows to return. Defaults to 100 and is capped at 500.
@@ -366,7 +374,7 @@ struct XDislikesQuery {
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct XDislikesResponse {
+struct DislikesResponse {
     site: &'static str,
     active: Option<bool>,
     total_matching: usize,
@@ -378,6 +386,8 @@ struct XDislikesResponse {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct RulesQuery {
+    /// Site scope for the request, such as `x.com`.
+    site: Option<String>,
     /// Optional rule status filter.
     status: Option<String>,
     /// Maximum number of rows to return. Defaults to 100 and is capped at 500.
@@ -401,6 +411,15 @@ struct RulesResponse {
 struct ApiError {
     status: StatusCode,
     message: String,
+}
+
+impl ApiError {
+    fn bad_request(message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::BAD_REQUEST,
+            message: message.into(),
+        }
+    }
 }
 
 impl From<StorageError> for ApiError {
@@ -435,6 +454,35 @@ struct HealthResponse {
     service: &'static str,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SiteScope {
+    XCom,
+}
+
+impl SiteScope {
+    fn from_param(site: Option<&str>) -> Result<Self, ApiError> {
+        match site.map(str::trim).filter(|value| !value.is_empty()) {
+            Some(value) if is_x_site(value) => Ok(Self::XCom),
+            Some(value) => Err(ApiError::bad_request(format!(
+                "unsupported site query parameter: {value}"
+            ))),
+            None => Err(ApiError::bad_request(
+                "missing required site query parameter",
+            )),
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::XCom => "x.com",
+        }
+    }
+}
+
+fn is_x_site(site: &str) -> bool {
+    site.eq_ignore_ascii_case("x.com") || site.eq_ignore_ascii_case("twitter.com")
+}
+
 #[derive(Clone)]
 struct AppState {
     ai_analyzer: AiAnalyzer,
@@ -446,4 +494,40 @@ fn env_flag_default(name: &str, default: bool) -> bool {
     std::env::var(name)
         .map(|value| value != "0" && !value.eq_ignore_ascii_case("false"))
         .unwrap_or(default)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn site_scope_accepts_supported_site_query_values() {
+        assert_eq!(
+            SiteScope::from_param(Some("x.com")).unwrap(),
+            SiteScope::XCom
+        );
+        assert_eq!(
+            SiteScope::from_param(Some(" twitter.com ")).unwrap(),
+            SiteScope::XCom
+        );
+    }
+
+    #[test]
+    fn site_scope_rejects_missing_site_query() {
+        let error = SiteScope::from_param(None).unwrap_err();
+
+        assert_eq!(error.status, StatusCode::BAD_REQUEST);
+        assert_eq!(error.message, "missing required site query parameter");
+    }
+
+    #[test]
+    fn site_scope_rejects_unsupported_site_query() {
+        let error = SiteScope::from_param(Some("example.com")).unwrap_err();
+
+        assert_eq!(error.status, StatusCode::BAD_REQUEST);
+        assert_eq!(
+            error.message,
+            "unsupported site query parameter: example.com"
+        );
+    }
 }

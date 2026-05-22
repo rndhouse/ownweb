@@ -25,12 +25,12 @@ The daemon currently seeds one active X rule:
 Rules can be inspected through:
 
 ```http
-GET http://127.0.0.1:17891/v1/sites/x.com/rules
+GET http://127.0.0.1:17891/v1/rules?site=x.com
 ```
 
 Supported query parameters:
 
+- `site`: required site scope, such as `x.com`.
 - `status`: optional status filter, such as `active`.
 - `limit`: maximum rows to return; defaults to `100` and is capped at `500`.
 - `offset`: rows to skip.
-

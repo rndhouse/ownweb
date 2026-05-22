@@ -86,7 +86,8 @@ RUST_LOG=debug
 - `GET /v1/events`
 - `POST /v1/dom/analyze`
 - `POST /v1/dom/feedback`
-- `GET /v1/sites/x.com/rules`
+- `GET /v1/dislikes?site=x.com`
+- `GET /v1/rules?site=x.com`
 
 `/v1/events` is the primary extension path. The extension opens a WebSocket,
 sends DOM analysis events, receives immediate `pending` commands that gate
@@ -95,7 +96,8 @@ identified posts, then receives `final` commands after local analysis finishes.
 `/v1/dom/analyze` is the REST smoke-test path. It accepts the same DOM snapshot
 shape and returns final DOM commands in one response. `/v1/dom/feedback`
 records `thumbsDown`, `undoThumbsDown`, and `updateReason` signals for one DOM
-region.
+region. Site-scoped inspection endpoints keep the path generic and take the
+site scope through the `site` query parameter.
 
 Request shape:
 
