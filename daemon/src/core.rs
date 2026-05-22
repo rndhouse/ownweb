@@ -109,6 +109,14 @@ pub struct DomElementSnapshot {
     pub captured_at: Option<String>,
 }
 
+/// User feedback signal sent by the browser extension for a DOM region.
+#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum FeedbackKind {
+    /// User requested less content like this region.
+    ThumbsDown,
+}
+
 /// One DOM attribute captured from a region root.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]

@@ -27,6 +27,8 @@ observer.observe(document.documentElement, {
   characterData: true
 });
 
+document.addEventListener("click", handleOwnWebClick, true);
+
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (!message || message.type !== "ownweb:applyCommands") {
     return false;
@@ -274,6 +276,10 @@ function applyCommands(commands) {
       continue;
     }
 
+    if (shouldKeepFeedbackHidden(element, command)) {
+      continue;
+    }
+
     clearOwnWebChanges(element);
     element.dataset.ownwebState = command.action || "keep";
 
@@ -302,6 +308,81 @@ function applyCommands(commands) {
       insertBadge(element, command);
     }
   }
+}
+
+function handleOwnWebClick(event) {
+  const target = eventTargetElement(event);
+  const button = target ? target.closest(".ownweb-feedback-button") : null;
+  if (!button) {
+    return;
+  }
+
+  event.preventDefault();
+  event.stopPropagation();
+  event.stopImmediatePropagation();
+
+  const clientId = button.dataset.ownwebClientId || "";
+  const element = elementsByClientId.get(clientId);
+  if (!element) {
+    return;
+  }
+
+  void sendFeedback(element, button);
+}
+
+function eventTargetElement(event) {
+  if (event.target instanceof Element) {
+    return event.target;
+  }
+
+  return event.target && event.target.parentElement instanceof Element
+    ? event.target.parentElement
+    : null;
+}
+
+async function sendFeedback(element, button) {
+  const snapshot = snapshotElement(element);
+  if (!snapshot) {
+    return;
+  }
+
+  if (snapshot.snapshotHash) {
+    element.dataset.ownwebUserHiddenSnapshotHash = snapshot.snapshotHash;
+  }
+  button.disabled = true;
+  button.dataset.ownwebFeedbackState = "pending";
+
+  try {
+    const response = await sendMessage({
+      type: "ownweb:feedback",
+      feedback: "thumbsDown",
+      page: pageSnapshot(),
+      element: snapshot
+    });
+
+    if (!response || !response.ok) {
+      throw new Error(response && response.error ? response.error : "Daemon request failed.");
+    }
+
+    applyCommands(response.commands || []);
+  } catch (error) {
+    delete element.dataset.ownwebUserHiddenSnapshotHash;
+    button.disabled = false;
+    button.dataset.ownwebFeedbackState = "unavailable";
+    button.title = `OwnWeb feedback unavailable: ${
+      error instanceof Error ? error.message : String(error)
+    }`;
+  }
+}
+
+function shouldKeepFeedbackHidden(element, command) {
+  const hiddenSnapshotHash = element.dataset.ownwebUserHiddenSnapshotHash;
+  if (!hiddenSnapshotHash || command.action === "hide") {
+    return false;
+  }
+
+  const commandSnapshotHash = command.target && command.target.mustMatchSnapshotHash;
+  return !commandSnapshotHash || commandSnapshotHash === hiddenSnapshotHash;
 }
 
 function resolveTarget(target) {
@@ -359,10 +440,34 @@ function replaceRegionText(element, replacementText) {
 function insertBadge(element, command) {
   const badgeText = command.label || command.reason || "OwnWeb";
   const badge = document.createElement("div");
+  const text = document.createElement("span");
+  const clientId = command.target && command.target.clientId
+    ? command.target.clientId
+    : getClientId(element);
+
   badge.className = "ownweb-badge";
   badge.dataset.ownwebUi = "true";
-  badge.textContent = badgeText;
+  badge.dataset.ownwebClientId = clientId;
+
+  text.className = "ownweb-badge-text";
+  text.dataset.ownwebUi = "true";
+  text.textContent = badgeText;
+
+  badge.append(text, createFeedbackButton(clientId));
   element.prepend(badge);
+}
+
+function createFeedbackButton(clientId) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "ownweb-feedback-button";
+  button.dataset.ownwebUi = "true";
+  button.dataset.ownwebClientId = clientId;
+  button.dataset.ownwebFeedback = "thumbsDown";
+  button.title = "Hide this post";
+  button.setAttribute("aria-label", "Hide this post");
+  button.textContent = "\uD83D\uDC4E";
+  return button;
 }
 
 function markBatchUnavailable(batch, error) {

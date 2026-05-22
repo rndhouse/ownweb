@@ -2,7 +2,7 @@ use crate::{
     ai::{AiAnalyzer, AiOpinion},
     core::{
         AnalysisBatch, ContentDecision, ContentItem, DomAnalysisBatch, DomCommand,
-        DomCommandTarget, DomElementSnapshot,
+        DomCommandTarget, DomElementSnapshot, FeedbackKind,
     },
     storage::ContentStore,
 };
@@ -104,6 +104,43 @@ pub fn pending_dom_commands(batch: &DomAnalysisBatch, ai_analyzer: &AiAnalyzer) 
             Some(DomCommand::checking(extracted.target))
         })
         .collect()
+}
+
+/// Applies user feedback to X/Twitter DOM snapshots.
+pub fn apply_feedback(
+    batch: &DomAnalysisBatch,
+    feedback: FeedbackKind,
+    content_store: &ContentStore,
+) -> Vec<DomCommand> {
+    let extracted_items = extract_items(batch);
+    if extracted_items.is_empty() {
+        return Vec::new();
+    }
+
+    let content_batch = content_batch_from_extracted(&extracted_items);
+    record_content_batch(content_store, &content_batch);
+
+    feedback_commands(extracted_items, feedback)
+}
+
+fn feedback_commands(
+    extracted_items: Vec<ExtractedItem>,
+    feedback: FeedbackKind,
+) -> Vec<DomCommand> {
+    match feedback {
+        FeedbackKind::ThumbsDown => extracted_items
+            .into_iter()
+            .map(|extracted| {
+                let decision = ContentDecision::hide(
+                    extracted.item.client_id,
+                    "OwnWeb: hidden",
+                    "Hidden after thumbs-down feedback",
+                    1.0,
+                );
+                DomCommand::from_decision(decision, extracted.target)
+            })
+            .collect(),
+    }
 }
 
 async fn decide_items(items: &[ContentItem], ai_analyzer: &AiAnalyzer) -> Vec<ContentDecision> {
@@ -713,5 +750,25 @@ mod tests {
 
         assert_eq!(commands.len(), 1);
         assert_eq!(commands[0].target.client_id, "client-2");
+    }
+
+    #[test]
+    fn thumbs_down_feedback_hides_the_target_post() {
+        let batch = batch(vec![element(
+            "client-1",
+            "Post text",
+            Some("https://x.com/user/status/12345"),
+        )]);
+        let extracted = extract_items(&batch);
+
+        let commands = feedback_commands(extracted, FeedbackKind::ThumbsDown);
+
+        assert_eq!(commands.len(), 1);
+        assert_eq!(commands[0].target.client_id, "client-1");
+        assert!(matches!(
+            commands[0].action,
+            crate::core::DomCommandAction::Hide
+        ));
+        assert_eq!(commands[0].label.as_deref(), Some("OwnWeb: hidden"));
     }
 }

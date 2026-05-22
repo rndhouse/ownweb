@@ -1,6 +1,6 @@
 use crate::{
     ai::AiAnalyzer,
-    core::{DomAnalysisBatch, DomCommand},
+    core::{DomAnalysisBatch, DomCommand, DomElementSnapshot, FeedbackKind, PageSnapshot},
     sites,
     storage::{ContentStore, StorageError},
 };
@@ -33,6 +33,7 @@ pub fn router() -> Result<Router, StorageError> {
         .route("/health", get(health))
         .route("/v1/events", get(events_ws))
         .route("/v1/dom/analyze", post(analyze_dom))
+        .route("/v1/dom/feedback", post(dom_feedback))
         .with_state(state)
         .layer(cors_layer()))
 }
@@ -71,6 +72,23 @@ async fn analyze_dom(
 
     Json(DomAnalyzeResponse {
         commands: sites::analyze_dom(&batch, &state.ai_analyzer, &state.content_store).await,
+    })
+}
+
+async fn dom_feedback(
+    State(state): State<AppState>,
+    Json(request): Json<DomFeedbackRequest>,
+) -> Json<DomFeedbackResponse> {
+    let batch = DomAnalysisBatch {
+        page: request.page,
+        elements: vec![request.element],
+    };
+    if state.log_captured_content {
+        log_dom_batch(&batch);
+    }
+
+    Json(DomFeedbackResponse {
+        commands: sites::apply_feedback(&batch, request.feedback, &state.content_store),
     })
 }
 
@@ -241,6 +259,26 @@ enum AnalysisPhase {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DomAnalyzeResponse {
+    /// Commands for the extension's generic DOM executor.
+    pub commands: Vec<DomCommand>,
+}
+
+/// Request for applying user feedback to one captured DOM region.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DomFeedbackRequest {
+    /// Feedback signal chosen by the user.
+    pub feedback: FeedbackKind,
+    /// Snapshot metadata for the live page.
+    pub page: PageSnapshot,
+    /// DOM region that received feedback.
+    pub element: DomElementSnapshot,
+}
+
+/// Response for a DOM feedback request.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DomFeedbackResponse {
     /// Commands for the extension's generic DOM executor.
     pub commands: Vec<DomCommand>,
 }

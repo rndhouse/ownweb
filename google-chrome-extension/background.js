@@ -1,5 +1,6 @@
 const DEFAULT_DAEMON_ORIGIN = "http://127.0.0.1:17891";
 const ANALYZE_PATH = "/v1/dom/analyze";
+const FEEDBACK_PATH = "/v1/dom/feedback";
 const EVENTS_PATH = "/v1/events";
 const REQUEST_TIMEOUT_MS = 20000;
 const MAX_ELEMENTS_PER_REQUEST = 16;
@@ -14,20 +15,37 @@ let nextRequestId = 1;
 const pendingRequests = new Map();
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (!message || message.type !== "ownweb:analyzeDom") {
+  if (!message || typeof message !== "object") {
     return false;
   }
 
-  analyzeDom(message, sender)
-    .then((commands) => sendResponse({ ok: true, commands }))
-    .catch((error) => {
-      sendResponse({
-        ok: false,
-        error: error instanceof Error ? error.message : String(error)
+  if (message.type === "ownweb:analyzeDom") {
+    analyzeDom(message, sender)
+      .then((commands) => sendResponse({ ok: true, commands }))
+      .catch((error) => {
+        sendResponse({
+          ok: false,
+          error: error instanceof Error ? error.message : String(error)
+        });
       });
-    });
 
-  return true;
+    return true;
+  }
+
+  if (message.type === "ownweb:feedback") {
+    sendFeedback(message)
+      .then((commands) => sendResponse({ ok: true, commands }))
+      .catch((error) => {
+        sendResponse({
+          ok: false,
+          error: error instanceof Error ? error.message : String(error)
+        });
+      });
+
+    return true;
+  }
+
+  return false;
 });
 
 async function analyzeDom(message, sender) {
@@ -90,6 +108,24 @@ async function sendAnalyzeDomOverSocket(origin, tabId, body) {
 
 async function analyzeDomOverRest(origin, body) {
   const response = await postJson(origin, ANALYZE_PATH, body);
+
+  if (!Array.isArray(response.commands)) {
+    throw new Error("Daemon response must include a commands array.");
+  }
+
+  return response.commands.map(normalizeCommand);
+}
+
+async function sendFeedback(message) {
+  const settings = await getSettings();
+  const feedback = normalizeFeedback(message.feedback);
+  const page = normalizePage(message.page);
+  const element = normalizeElement(message.element);
+  const response = await postJson(settings.daemonOrigin, FEEDBACK_PATH, {
+    feedback,
+    page,
+    element
+  });
 
   if (!Array.isArray(response.commands)) {
     throw new Error("Daemon response must include a commands array.");
@@ -292,6 +328,11 @@ function normalizeCommand(command) {
     reason: stringOrNull(command.reason),
     confidence: Number.isFinite(command.confidence) ? command.confidence : null
   };
+}
+
+function normalizeFeedback(value) {
+  const feedback = stringOrEmpty(value);
+  return feedback === "thumbsDown" ? feedback : "thumbsDown";
 }
 
 async function getSettings() {

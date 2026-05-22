@@ -31,6 +31,14 @@ POST http://127.0.0.1:17891/v1/dom/analyze
 Content-Type: application/json
 ```
 
+The extension also sends user feedback to the daemon. A thumbs-down click on an
+OwnWeb badge posts the current region snapshot to:
+
+```http
+POST http://127.0.0.1:17891/v1/dom/feedback
+Content-Type: application/json
+```
+
 WebSocket request shape:
 
 ```json
@@ -92,3 +100,34 @@ WebSocket command event shape:
 Supported actions are `keep`, `hide`, `dim`, `insertLabel`, and
 `replaceText`. The extension does not make site-specific filtering decisions;
 the daemon interprets supported sites and decides what commands to return.
+
+Feedback request shape:
+
+```json
+{
+  "feedback": "thumbsDown",
+  "page": {
+    "url": "https://x.com/home",
+    "title": "X",
+    "capturedAt": "2026-05-22T10:00:00.000Z"
+  },
+  "element": {
+    "clientId": "dom:1",
+    "selector": "article:nth-of-type(1)",
+    "tagName": "article",
+    "role": "article",
+    "text": "Post text",
+    "html": "<article>...</article>",
+    "attributes": [],
+    "links": [
+      {
+        "href": "https://x.com/user/status/123",
+        "text": "status",
+        "ariaLabel": null
+      }
+    ],
+    "snapshotHash": "abc123",
+    "capturedAt": "2026-05-21T10:00:00.000Z"
+  }
+}
+```

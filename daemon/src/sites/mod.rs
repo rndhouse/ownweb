@@ -1,6 +1,6 @@
 use crate::{
     ai::AiAnalyzer,
-    core::{DomAnalysisBatch, DomCommand},
+    core::{DomAnalysisBatch, DomCommand, FeedbackKind},
     storage::ContentStore,
 };
 
@@ -25,6 +25,20 @@ pub fn cached_dom_commands(
             x_com::cached_dom_commands(batch, ai_analyzer, content_store)
         }
         _ => Some(Vec::new()),
+    }
+}
+
+/// Applies user feedback through the matching site handler.
+pub fn apply_feedback(
+    batch: &DomAnalysisBatch,
+    feedback: FeedbackKind,
+    content_store: &ContentStore,
+) -> Vec<DomCommand> {
+    match page_host(&batch.page.url).as_deref() {
+        Some("x.com") | Some("twitter.com") => {
+            x_com::apply_feedback(batch, feedback, content_store)
+        }
+        _ => Vec::new(),
     }
 }
 
