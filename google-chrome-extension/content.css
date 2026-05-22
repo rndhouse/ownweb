@@ -43,8 +43,8 @@
   align-items: center;
   justify-content: center;
   flex: 0 0 auto;
-  width: 34px;
-  height: 34px;
+  width: 30px;
+  height: 30px;
   margin: 0;
   padding: 0;
   border: 0;
@@ -68,11 +68,11 @@
 }
 
 .ownweb-feedback-icon {
-  width: 18px;
-  height: 18px;
+  width: 15px;
+  height: 15px;
   fill: none;
   stroke: currentColor;
-  stroke-width: 1.9;
+  stroke-width: 1.7;
   stroke-linecap: round;
   stroke-linejoin: round;
 }
