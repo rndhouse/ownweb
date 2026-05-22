@@ -8,7 +8,7 @@ use std::{
     time::Instant,
 };
 use summary_cache::SummaryCache;
-use tracing::warn;
+use tracing::{debug, warn, Level};
 
 const CODEX_ENABLED_ENV: &str = "OWNWEB_CODEX_APP_ENABLED";
 
@@ -64,6 +64,11 @@ impl AiAnalyzer {
         let Some(codex_app) = self.codex_app.as_ref() else {
             return (!opinions.is_empty()).then_some(opinions);
         };
+
+        for item in &misses {
+            debug_x_agent_query_item(item);
+        }
+
         match codex_app.x_opinions(&misses, rules).await {
             Ok(fresh_opinions) => {
                 let misses_by_client_id: HashMap<_, _> = misses
@@ -140,6 +145,23 @@ impl AiAnalyzer {
             codex_app: None,
             x_summary_cache: Arc::new(Mutex::new(cache)),
         }
+    }
+}
+
+fn debug_x_agent_query_item(item: &ContentItem) {
+    if !tracing::enabled!(target: "ownweb_daemon::ai", Level::DEBUG) {
+        return;
+    }
+
+    if let Ok(post_json) = serde_json::to_string(item) {
+        debug!(
+            target: "ownweb_daemon::ai",
+            client_id = item.client_id.as_str(),
+            content_id = item.content_id.as_deref(),
+            url = item.url.as_deref(),
+            post = %post_json,
+            "querying Codex app-server for X post"
+        );
     }
 }
 

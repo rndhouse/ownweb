@@ -8,7 +8,7 @@ use crate::{
 };
 use serde_json::json;
 use std::collections::HashMap;
-use tracing::{debug, warn, Level};
+use tracing::{trace, warn, Level};
 
 /// Interprets X/Twitter DOM snapshots and returns browser DOM commands.
 pub async fn analyze_dom(
@@ -317,7 +317,7 @@ fn extract_item(
             "snapshotHash": element.snapshot_hash,
         }),
     };
-    debug_identified_post(&item);
+    trace_identified_post(&item);
 
     let target = DomCommandTarget {
         client_id: element.client_id.clone(),
@@ -346,18 +346,18 @@ fn has_root_attribute(element: &DomElementSnapshot, name: &str, value: &str) -> 
     })
 }
 
-fn debug_identified_post(item: &ContentItem) {
-    if !tracing::enabled!(target: "ownweb_daemon::sites::x_com", Level::DEBUG) {
+fn trace_identified_post(item: &ContentItem) {
+    if !tracing::enabled!(target: "ownweb_daemon::sites::x_com", Level::TRACE) {
         return;
     }
 
-    if let Ok(tweet_json) = serde_json::to_string(item) {
-        debug!(
+    if let Ok(post_json) = serde_json::to_string(item) {
+        trace!(
             target: "ownweb_daemon::sites::x_com",
             client_id = item.client_id.as_str(),
             content_id = item.content_id.as_deref(),
             url = item.url.as_deref(),
-            tweet = %tweet_json,
+            post = %post_json,
             "identified X post"
         );
     }

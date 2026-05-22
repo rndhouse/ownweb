@@ -57,7 +57,9 @@ Opinions are cached in memory by X status ID, a normalized fallback key, and the
 active rule set. This lets the timeline view and single-post view reuse the same
 AI decision when they capture the same post content under the same policy.
 
-Cache hits are logged at debug level on stdout:
+Cache hits and X posts sent to the Codex app-server are logged at debug level
+on stdout. Repeated full captured post payloads from DOM extraction are trace
+level:
 
 ```sh
 cargo run
