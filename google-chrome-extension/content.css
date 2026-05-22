@@ -53,6 +53,7 @@
   color: rgb(83, 100, 113);
   cursor: pointer;
   line-height: 1;
+  transform: translateY(5px);
 }
 
 .ownweb-feedback-button:hover,
@@ -75,7 +76,6 @@
   stroke-width: 1.9;
   stroke-linecap: round;
   stroke-linejoin: round;
-  transform: translateY(1px);
 }
 
 .ownweb-replaced {
