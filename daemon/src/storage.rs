@@ -1,6 +1,7 @@
 mod x_com;
 
 use crate::core::{AnalysisBatch, ContentItem, FeedbackKind};
+use serde::Serialize;
 use std::{
     fmt,
     io::ErrorKind,
@@ -26,6 +27,65 @@ pub struct XFeedbackState {
     pub active: bool,
     /// Latest reason attached to the dislike signal.
     pub reason: String,
+}
+
+/// Query options for listing stored X/Twitter dislikes.
+#[derive(Debug, Clone, Copy)]
+pub struct XDislikeQuery {
+    /// Whether to filter by current active dislike state.
+    pub active: Option<bool>,
+    /// Maximum number of rows to return.
+    pub limit: usize,
+    /// Number of matching rows to skip.
+    pub offset: usize,
+}
+
+/// Page of stored X/Twitter dislikes.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct XDislikePage {
+    /// Number of matching rows before pagination.
+    pub total_matching: usize,
+    /// Maximum number of rows requested.
+    pub limit: usize,
+    /// Number of matching rows skipped.
+    pub offset: usize,
+    /// Matching disliked posts.
+    pub items: Vec<XDislikedPost>,
+}
+
+/// Stored X/Twitter post plus user feedback state.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct XDislikedPost {
+    /// Stable storage key used by OwnWeb.
+    pub storage_key: String,
+    /// X status ID when known.
+    pub post_id: Option<String>,
+    /// Canonical or latest captured URL when known.
+    pub url: Option<String>,
+    /// Author handle when known.
+    pub author: Option<String>,
+    /// Latest stored post text.
+    pub text: String,
+    /// Latest user-entered feedback reason.
+    pub reason: String,
+    /// Whether this dislike is currently active.
+    pub active: bool,
+    /// Latest feedback event kind that set this state.
+    pub feedback_kind: String,
+    /// First timestamp for this feedback state.
+    pub disliked_at_unix_ms: i64,
+    /// Latest timestamp for this feedback state.
+    pub updated_at_unix_ms: i64,
+    /// First time this post was seen.
+    pub first_seen_at_unix_ms: Option<i64>,
+    /// Most recent time this post was seen.
+    pub last_seen_at_unix_ms: Option<i64>,
+    /// Number of times this post has been stored.
+    pub seen_count: Option<i64>,
+    /// Latest client-side capture timestamp.
+    pub latest_captured_at: Option<String>,
 }
 
 impl ContentStore {
@@ -84,6 +144,15 @@ impl ContentStore {
             .lock()
             .expect("X storage mutex should not be poisoned");
         db.feedback_state(item)
+    }
+
+    /// Lists stored X/Twitter dislikes for agent and CLI inspection.
+    pub fn x_dislikes(&self, query: XDislikeQuery) -> Result<XDislikePage> {
+        let db = self
+            .x_com
+            .lock()
+            .expect("X storage mutex should not be poisoned");
+        db.dislikes(query)
     }
 }
 

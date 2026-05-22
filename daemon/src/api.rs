@@ -2,13 +2,13 @@ use crate::{
     ai::AiAnalyzer,
     core::{DomAnalysisBatch, DomCommand, DomElementSnapshot, FeedbackKind, PageSnapshot},
     sites,
-    storage::{ContentStore, StorageError},
+    storage::{ContentStore, StorageError, XDislikeQuery, XDislikedPost},
 };
 use axum::{
     extract::ws::{Message, WebSocket, WebSocketUpgrade},
-    extract::State,
-    http::{header, Method},
-    response::IntoResponse,
+    extract::{Query, State},
+    http::{header, Method, StatusCode},
+    response::{IntoResponse, Response},
     routing::{get, post},
     Json, Router,
 };
@@ -20,6 +20,8 @@ use tower_http::cors::{Any, CorsLayer};
 use tracing::{debug, info, warn};
 
 const LOG_CAPTURED_CONTENT_ENV: &str = "OWNWEB_LOG_CAPTURED_CONTENT";
+const DEFAULT_DISLIKE_LIMIT: usize = 100;
+const MAX_DISLIKE_LIMIT: usize = 500;
 
 /// Builds the daemon HTTP router.
 pub fn router() -> Result<Router, StorageError> {
@@ -34,6 +36,7 @@ pub fn router() -> Result<Router, StorageError> {
         .route("/v1/events", get(events_ws))
         .route("/v1/dom/analyze", post(analyze_dom))
         .route("/v1/dom/feedback", post(dom_feedback))
+        .route("/v1/sites/x.com/dislikes", get(x_dislikes))
         .with_state(state)
         .layer(cors_layer()))
 }
@@ -96,6 +99,32 @@ async fn dom_feedback(
     Json(DomFeedbackResponse {
         commands: sites::apply_feedback(&batch, feedback, reason.as_str(), &state.content_store),
     })
+}
+
+async fn x_dislikes(
+    State(state): State<AppState>,
+    Query(query): Query<XDislikesQuery>,
+) -> Result<Json<XDislikesResponse>, ApiError> {
+    let active = query.active.or(Some(true));
+    let limit = query
+        .limit
+        .unwrap_or(DEFAULT_DISLIKE_LIMIT)
+        .min(MAX_DISLIKE_LIMIT);
+    let offset = query.offset.unwrap_or(0);
+    let page = state.content_store.x_dislikes(XDislikeQuery {
+        active,
+        limit,
+        offset,
+    })?;
+
+    Ok(Json(XDislikesResponse {
+        site: "x.com",
+        active,
+        total_matching: page.total_matching,
+        limit: page.limit,
+        offset: page.offset,
+        items: page.items,
+    }))
 }
 
 async fn handle_event_socket(socket: WebSocket, state: AppState) {
@@ -290,6 +319,60 @@ pub struct DomFeedbackRequest {
 pub struct DomFeedbackResponse {
     /// Commands for the extension's generic DOM executor.
     pub commands: Vec<DomCommand>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct XDislikesQuery {
+    /// Filter by current active dislike state. Defaults to active dislikes.
+    active: Option<bool>,
+    /// Maximum number of rows to return. Defaults to 100 and is capped at 500.
+    limit: Option<usize>,
+    /// Number of matching rows to skip.
+    offset: Option<usize>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct XDislikesResponse {
+    site: &'static str,
+    active: Option<bool>,
+    total_matching: usize,
+    limit: usize,
+    offset: usize,
+    items: Vec<XDislikedPost>,
+}
+
+#[derive(Debug)]
+struct ApiError {
+    status: StatusCode,
+    message: String,
+}
+
+impl From<StorageError> for ApiError {
+    fn from(error: StorageError) -> Self {
+        Self {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            message: error.to_string(),
+        }
+    }
+}
+
+impl IntoResponse for ApiError {
+    fn into_response(self) -> Response {
+        (
+            self.status,
+            Json(ErrorResponse {
+                error: self.message,
+            }),
+        )
+            .into_response()
+    }
+}
+
+#[derive(Debug, Serialize)]
+struct ErrorResponse {
+    error: String,
 }
 
 #[derive(Debug, Serialize)]
