@@ -75,6 +75,7 @@
   stroke-width: 1.9;
   stroke-linecap: round;
   stroke-linejoin: round;
+  transform: translateY(1px);
 }
 
 .ownweb-replaced {
