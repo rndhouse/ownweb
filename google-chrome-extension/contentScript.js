@@ -72,6 +72,13 @@ function scanForRegions() {
       continue;
     }
 
+    if (
+      element.dataset.ownwebKeepVisibleAfterFeedbackHash &&
+      element.dataset.ownwebKeepVisibleAfterFeedbackHash !== snapshot.snapshotHash
+    ) {
+      delete element.dataset.ownwebKeepVisibleAfterFeedbackHash;
+    }
+
     element.dataset.ownwebSnapshotHash = snapshot.snapshotHash;
     element.dataset.ownwebState = "queued";
     elementsByClientId.set(snapshot.clientId, element);
@@ -292,6 +299,11 @@ function applyCommands(commands) {
       continue;
     }
 
+    if (command.action === "hide" && shouldKeepVisibleAfterFeedback(element, command)) {
+      element.dataset.ownwebState = "feedbackActive";
+      continue;
+    }
+
     clearOwnWebChanges(element);
     element.dataset.ownwebState = command.action || "keep";
 
@@ -391,9 +403,11 @@ async function toggleFeedback(element, button) {
     applyCommands(response.commands || []);
 
     if (wasActive) {
+      clearKeepVisibleAfterFeedback(element);
       setFeedbackButtonActive(button, false);
       removeFeedbackReasonPanel(element, button.dataset.ownwebClientId || "");
     } else {
+      markKeepVisibleAfterFeedback(element);
       setFeedbackButtonActive(button, true);
       showFeedbackReasonPanel(element, button);
     }
@@ -433,6 +447,32 @@ function setFeedbackButtonActive(button, active) {
   button.title = label;
   button.setAttribute("aria-label", label);
   button.setAttribute("aria-pressed", active ? "true" : "false");
+}
+
+function markKeepVisibleAfterFeedback(element) {
+  const snapshot = snapshotElement(element);
+  if (snapshot && snapshot.snapshotHash) {
+    element.dataset.ownwebKeepVisibleAfterFeedbackHash = snapshot.snapshotHash;
+  }
+}
+
+function clearKeepVisibleAfterFeedback(element) {
+  delete element.dataset.ownwebKeepVisibleAfterFeedbackHash;
+}
+
+function shouldKeepVisibleAfterFeedback(element, command) {
+  const keepVisibleHash = element.dataset.ownwebKeepVisibleAfterFeedbackHash;
+  if (!keepVisibleHash) {
+    return false;
+  }
+
+  const commandHash = command.target && command.target.mustMatchSnapshotHash;
+  if (commandHash) {
+    return commandHash === keepVisibleHash;
+  }
+
+  const snapshot = snapshotElement(element);
+  return snapshot && snapshot.snapshotHash === keepVisibleHash;
 }
 
 function showFeedbackReasonPanel(element, button) {
