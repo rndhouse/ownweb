@@ -361,6 +361,7 @@ async function sendFeedback(element, button) {
     const response = await sendMessage({
       type: "ownweb:feedback",
       feedback: "thumbsDown",
+      reason: "",
       page: pageSnapshot(),
       element: snapshot
     });

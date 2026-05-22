@@ -101,6 +101,7 @@ pub fn pending_dom_commands(
 pub fn apply_feedback(
     batch: &DomAnalysisBatch,
     feedback: FeedbackKind,
+    reason: &str,
     content_store: &ContentStore,
 ) -> Vec<DomCommand> {
     let extracted_items = extract_items(batch);
@@ -110,8 +111,27 @@ pub fn apply_feedback(
 
     let content_batch = content_batch_from_extracted(&extracted_items);
     record_content_batch(content_store, &content_batch);
+    record_feedback(content_store, &content_batch.items, feedback, reason);
 
     feedback_commands(extracted_items, feedback)
+}
+
+fn record_feedback(
+    content_store: &ContentStore,
+    items: &[ContentItem],
+    feedback: FeedbackKind,
+    reason: &str,
+) {
+    for item in items {
+        if let Err(error) = content_store.record_x_feedback(item, feedback, reason) {
+            warn!(
+                %error,
+                client_id = item.client_id.as_str(),
+                content_id = item.content_id.as_deref(),
+                "failed to store X feedback"
+            );
+        }
+    }
 }
 
 fn feedback_commands(

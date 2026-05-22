@@ -119,10 +119,12 @@ async function analyzeDomOverRest(origin, body) {
 async function sendFeedback(message) {
   const settings = await getSettings();
   const feedback = normalizeFeedback(message.feedback);
+  const reason = stringOrEmpty(message.reason);
   const page = normalizePage(message.page);
   const element = normalizeElement(message.element);
   const response = await postJson(settings.daemonOrigin, FEEDBACK_PATH, {
     feedback,
+    reason,
     page,
     element
   });

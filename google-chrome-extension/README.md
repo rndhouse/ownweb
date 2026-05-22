@@ -38,6 +38,8 @@ POST http://127.0.0.1:17891/v1/dom/feedback
 Content-Type: application/json
 ```
 
+For X posts, the daemon stores feedback events in the X site database.
+
 WebSocket request shape:
 
 ```json
@@ -106,6 +108,7 @@ Feedback request shape:
 ```json
 {
   "feedback": "thumbsDown",
+  "reason": "",
   "page": {
     "url": "https://x.com/home",
     "title": "X",

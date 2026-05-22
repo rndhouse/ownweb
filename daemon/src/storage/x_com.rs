@@ -1,4 +1,4 @@
-use crate::core::{AnalysisBatch, ContentItem};
+use crate::core::{AnalysisBatch, ContentItem, FeedbackKind};
 use rusqlite::{params, Connection};
 use serde::Serialize;
 use std::{
@@ -46,6 +46,27 @@ impl Store {
                 ON tweets(author_handle);
             CREATE INDEX IF NOT EXISTS tweets_last_seen_at_idx
                 ON tweets(last_seen_at_unix_ms);
+
+            CREATE TABLE IF NOT EXISTS tweet_feedback (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                storage_key TEXT NOT NULL,
+                post_id TEXT,
+                feedback_kind TEXT NOT NULL,
+                reason TEXT NOT NULL,
+                created_at_unix_ms INTEGER NOT NULL,
+                client_id TEXT NOT NULL,
+                url TEXT,
+                author_handle TEXT,
+                captured_at TEXT,
+                payload_json TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS tweet_feedback_storage_key_idx
+                ON tweet_feedback(storage_key);
+            CREATE INDEX IF NOT EXISTS tweet_feedback_post_id_idx
+                ON tweet_feedback(post_id);
+            CREATE INDEX IF NOT EXISTS tweet_feedback_created_at_idx
+                ON tweet_feedback(created_at_unix_ms);
             ",
         )?;
 
@@ -123,6 +144,64 @@ impl Store {
 
         Ok(())
     }
+
+    pub(super) fn record_feedback(
+        &mut self,
+        item: &ContentItem,
+        feedback: FeedbackKind,
+        reason: &str,
+    ) -> super::Result<bool> {
+        let created_at_unix_ms = now_unix_ms();
+        let Some(record) =
+            StoredTweetFeedback::from_item(item, feedback, reason, created_at_unix_ms)?
+        else {
+            debug!(
+                target: "ownweb_daemon::storage::x_com",
+                client_id = item.client_id.as_str(),
+                "skipped X feedback without stable storage key"
+            );
+            return Ok(false);
+        };
+
+        self.connection.execute(
+            "
+            INSERT INTO tweet_feedback (
+                storage_key,
+                post_id,
+                feedback_kind,
+                reason,
+                created_at_unix_ms,
+                client_id,
+                url,
+                author_handle,
+                captured_at,
+                payload_json
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+            ",
+            params![
+                record.storage_key,
+                record.post_id,
+                record.feedback_kind,
+                record.reason,
+                record.created_at_unix_ms,
+                record.client_id,
+                record.url,
+                record.author_handle,
+                record.captured_at,
+                record.payload_json,
+            ],
+        )?;
+
+        debug!(
+            target: "ownweb_daemon::storage::x_com",
+            storage_key = record.storage_key.as_str(),
+            post_id = record.post_id.as_deref(),
+            feedback_kind = record.feedback_kind.as_str(),
+            "stored X feedback"
+        );
+
+        Ok(true)
+    }
 }
 
 struct StoredTweet {
@@ -135,6 +214,19 @@ struct StoredTweet {
     text_hash: String,
     seen_at_unix_ms: i64,
     client_id: String,
+    captured_at: Option<String>,
+    payload_json: String,
+}
+
+struct StoredTweetFeedback {
+    storage_key: String,
+    post_id: Option<String>,
+    feedback_kind: String,
+    reason: String,
+    created_at_unix_ms: i64,
+    client_id: String,
+    url: Option<String>,
+    author_handle: Option<String>,
     captured_at: Option<String>,
     payload_json: String,
 }
@@ -173,12 +265,63 @@ impl StoredTweet {
     }
 }
 
+impl StoredTweetFeedback {
+    fn from_item(
+        item: &ContentItem,
+        feedback: FeedbackKind,
+        reason: &str,
+        created_at_unix_ms: i64,
+    ) -> super::Result<Option<Self>> {
+        let post_id = stable_post_id(item);
+        let normalized_text = normalize_text(&item.text);
+        let Some(storage_key) = storage_key(item, post_id.as_deref(), &normalized_text) else {
+            return Ok(None);
+        };
+        let feedback_kind = feedback_kind_name(feedback).to_string();
+        let reason = reason.trim().to_string();
+        let payload_json = serde_json::to_string(&StoredTweetFeedbackPayload {
+            feedback_kind: feedback_kind.as_str(),
+            reason: reason.as_str(),
+            created_at_unix_ms,
+            item,
+        })?;
+
+        Ok(Some(Self {
+            storage_key,
+            post_id,
+            feedback_kind,
+            reason,
+            created_at_unix_ms,
+            client_id: item.client_id.clone(),
+            url: clean_optional(item.url.as_deref()),
+            author_handle: clean_optional(item.author.as_deref()),
+            captured_at: item.captured_at.clone(),
+            payload_json,
+        }))
+    }
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct StoredTweetPayload<'a> {
     source: &'a str,
     seen_at_unix_ms: i64,
     item: &'a ContentItem,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct StoredTweetFeedbackPayload<'a> {
+    feedback_kind: &'a str,
+    reason: &'a str,
+    created_at_unix_ms: i64,
+    item: &'a ContentItem,
+}
+
+fn feedback_kind_name(feedback: FeedbackKind) -> &'static str {
+    match feedback {
+        FeedbackKind::ThumbsDown => "thumbsDown",
+    }
 }
 
 fn storage_key(item: &ContentItem, post_id: Option<&str>, normalized_text: &str) -> Option<String> {
@@ -354,6 +497,53 @@ mod tests {
         assert_eq!(text, "second");
         assert_eq!(seen_count, 2);
         assert_eq!(latest_client_id, "client-2");
+
+        let _ = std::fs::remove_dir_all(db_path.parent().unwrap().parent().unwrap());
+    }
+
+    #[test]
+    fn records_thumbs_down_feedback_for_x_post() {
+        let db_path = temp_db_path("records-feedback");
+        let mut store = Store::open(&db_path).expect("store should open");
+        let item = item("client-1", Some("123"), "hello");
+
+        let recorded = store
+            .record_feedback(&item, FeedbackKind::ThumbsDown, "")
+            .expect("feedback should store");
+
+        let (storage_key, post_id, feedback_kind, reason, client_id): (
+            String,
+            String,
+            String,
+            String,
+            String,
+        ) = store
+            .connection
+            .query_row(
+                "
+                SELECT storage_key, post_id, feedback_kind, reason, client_id
+                FROM tweet_feedback
+                WHERE post_id = '123'
+                ",
+                [],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                    ))
+                },
+            )
+            .expect("feedback should exist");
+
+        assert!(recorded);
+        assert_eq!(storage_key, "x:id:123");
+        assert_eq!(post_id, "123");
+        assert_eq!(feedback_kind, "thumbsDown");
+        assert_eq!(reason, "");
+        assert_eq!(client_id, "client-1");
 
         let _ = std::fs::remove_dir_all(db_path.parent().unwrap().parent().unwrap());
     }

@@ -79,16 +79,22 @@ async fn dom_feedback(
     State(state): State<AppState>,
     Json(request): Json<DomFeedbackRequest>,
 ) -> Json<DomFeedbackResponse> {
+    let DomFeedbackRequest {
+        feedback,
+        page,
+        element,
+        reason,
+    } = request;
     let batch = DomAnalysisBatch {
-        page: request.page,
-        elements: vec![request.element],
+        page,
+        elements: vec![element],
     };
     if state.log_captured_content {
         log_dom_batch(&batch);
     }
 
     Json(DomFeedbackResponse {
-        commands: sites::apply_feedback(&batch, request.feedback, &state.content_store),
+        commands: sites::apply_feedback(&batch, feedback, reason.as_str(), &state.content_store),
     })
 }
 
@@ -269,6 +275,9 @@ pub struct DomAnalyzeResponse {
 pub struct DomFeedbackRequest {
     /// Feedback signal chosen by the user.
     pub feedback: FeedbackKind,
+    /// Optional user-supplied reason for the feedback.
+    #[serde(default)]
+    pub reason: String,
     /// Snapshot metadata for the live page.
     pub page: PageSnapshot,
     /// DOM region that received feedback.

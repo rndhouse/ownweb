@@ -1,6 +1,6 @@
 mod x_com;
 
-use crate::core::AnalysisBatch;
+use crate::core::{AnalysisBatch, ContentItem, FeedbackKind};
 use std::{
     fmt,
     io::ErrorKind,
@@ -52,6 +52,20 @@ impl ContentStore {
             .lock()
             .expect("X storage mutex should not be poisoned");
         db.record_batch(batch)
+    }
+
+    /// Stores user feedback for one X/Twitter content item.
+    pub fn record_x_feedback(
+        &self,
+        item: &ContentItem,
+        feedback: FeedbackKind,
+        reason: &str,
+    ) -> Result<bool> {
+        let mut db = self
+            .x_com
+            .lock()
+            .expect("X storage mutex should not be poisoned");
+        db.record_feedback(item, feedback, reason)
     }
 }
 

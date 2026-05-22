@@ -32,11 +32,12 @@ pub fn cached_dom_commands(
 pub fn apply_feedback(
     batch: &DomAnalysisBatch,
     feedback: FeedbackKind,
+    reason: &str,
     content_store: &ContentStore,
 ) -> Vec<DomCommand> {
     match page_host(&batch.page.url).as_deref() {
         Some("x.com") | Some("twitter.com") => {
-            x_com::apply_feedback(batch, feedback, content_store)
+            x_com::apply_feedback(batch, feedback, reason, content_store)
         }
         _ => Vec::new(),
     }
