@@ -1,11 +1,11 @@
 use crate::{
     core::{AnalysisBatch, ContentItem, FeedbackKind},
     storage::{
-        ContentRule, ContentStats, RuleExamples, RulePage, RuleQuery, XDislikePage, XDislikeQuery,
-        XDislikedPost,
+        ContentPage, ContentQuery, ContentRule, ContentStats, RuleExamples, RulePage, RuleQuery,
+        StoredContentItem, XDislikePage, XDislikeQuery, XDislikedPost,
     },
 };
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{params, Connection, OptionalExtension, Row};
 use serde::Serialize;
 use std::{
     path::Path,
@@ -117,6 +117,7 @@ impl Store {
                 ON content_rules(status, priority);
             ",
         )?;
+        migrate_search(&connection)?;
         seed_default_rules(&connection)?;
 
         Ok(Self { connection })
@@ -493,6 +494,108 @@ impl Store {
             },
         )?)
     }
+
+    pub(super) fn content(&self, query: ContentQuery) -> super::Result<ContentPage> {
+        let limit = sqlite_limit(query.limit);
+        let offset = sqlite_limit(query.offset);
+
+        match clean_optional(query.search.as_deref()) {
+            Some(search) => self.search_content(&search, limit, offset),
+            None => self.list_content(limit, offset),
+        }
+    }
+
+    fn list_content(&self, limit: i64, offset: i64) -> super::Result<ContentPage> {
+        let total_matching =
+            self.connection
+                .query_row("SELECT COUNT(*) FROM tweets", [], |row| {
+                    row.get::<_, i64>(0)
+                })?;
+
+        let mut statement = self.connection.prepare(
+            "
+            SELECT
+                storage_key,
+                post_id,
+                url,
+                author_handle,
+                text,
+                first_seen_at_unix_ms,
+                last_seen_at_unix_ms,
+                seen_count,
+                latest_captured_at
+            FROM tweets
+            ORDER BY last_seen_at_unix_ms DESC, storage_key ASC
+            LIMIT ?1 OFFSET ?2
+            ",
+        )?;
+        let items = statement
+            .query_map(params![limit, offset], |row| {
+                content_item_from_row(row, None)
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+
+        Ok(ContentPage {
+            total_matching: total_matching.max(0) as usize,
+            limit: limit as usize,
+            offset: offset as usize,
+            items,
+        })
+    }
+
+    fn search_content(&self, search: &str, limit: i64, offset: i64) -> super::Result<ContentPage> {
+        let Some(match_query) = fts_match_query(search) else {
+            return Ok(ContentPage {
+                total_matching: 0,
+                limit: limit as usize,
+                offset: offset as usize,
+                items: Vec::new(),
+            });
+        };
+
+        let total_matching = self.connection.query_row(
+            "
+            SELECT COUNT(*)
+            FROM tweets_fts
+            WHERE tweets_fts MATCH ?1
+            ",
+            [match_query.as_str()],
+            |row| row.get::<_, i64>(0),
+        )?;
+
+        let mut statement = self.connection.prepare(
+            "
+            SELECT
+                tweets.storage_key,
+                tweets.post_id,
+                tweets.url,
+                tweets.author_handle,
+                tweets.text,
+                tweets.first_seen_at_unix_ms,
+                tweets.last_seen_at_unix_ms,
+                tweets.seen_count,
+                tweets.latest_captured_at,
+                snippet(tweets_fts, 0, '', '', '...', 24) AS snippet
+            FROM tweets_fts
+            JOIN tweets ON tweets.rowid = tweets_fts.rowid
+            WHERE tweets_fts MATCH ?1
+            ORDER BY bm25(tweets_fts), tweets.last_seen_at_unix_ms DESC, tweets.storage_key ASC
+            LIMIT ?2 OFFSET ?3
+            ",
+        )?;
+        let items = statement
+            .query_map(params![match_query, limit, offset], |row| {
+                content_item_from_row(row, row.get(9)?)
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+
+        Ok(ContentPage {
+            total_matching: total_matching.max(0) as usize,
+            limit: limit as usize,
+            offset: offset as usize,
+            items,
+        })
+    }
 }
 
 struct StoredTweet {
@@ -672,6 +775,75 @@ fn seed_default_rules(connection: &Connection) -> super::Result<()> {
     )?;
 
     Ok(())
+}
+
+fn migrate_search(connection: &Connection) -> super::Result<()> {
+    connection.execute_batch(
+        "
+        CREATE VIRTUAL TABLE IF NOT EXISTS tweets_fts USING fts5(
+            text,
+            author_handle,
+            url,
+            content='tweets',
+            content_rowid='rowid',
+            tokenize='unicode61'
+        );
+
+        CREATE TRIGGER IF NOT EXISTS tweets_fts_after_insert
+        AFTER INSERT ON tweets BEGIN
+            INSERT INTO tweets_fts(rowid, text, author_handle, url)
+            VALUES (new.rowid, new.text, new.author_handle, new.url);
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS tweets_fts_after_delete
+        AFTER DELETE ON tweets BEGIN
+            INSERT INTO tweets_fts(tweets_fts, rowid, text, author_handle, url)
+            VALUES ('delete', old.rowid, old.text, old.author_handle, old.url);
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS tweets_fts_after_update
+        AFTER UPDATE ON tweets BEGIN
+            INSERT INTO tweets_fts(tweets_fts, rowid, text, author_handle, url)
+            VALUES ('delete', old.rowid, old.text, old.author_handle, old.url);
+            INSERT INTO tweets_fts(rowid, text, author_handle, url)
+            VALUES (new.rowid, new.text, new.author_handle, new.url);
+        END;
+
+        INSERT INTO tweets_fts(tweets_fts) VALUES ('rebuild');
+        ",
+    )?;
+
+    Ok(())
+}
+
+fn content_item_from_row(
+    row: &Row<'_>,
+    snippet: Option<String>,
+) -> rusqlite::Result<StoredContentItem> {
+    Ok(StoredContentItem {
+        content_kind: "post".into(),
+        storage_key: row.get(0)?,
+        content_id: row.get(1)?,
+        url: row.get(2)?,
+        author: row.get(3)?,
+        text: row.get(4)?,
+        snippet,
+        first_seen_at_unix_ms: row.get(5)?,
+        last_seen_at_unix_ms: row.get(6)?,
+        seen_count: row.get(7)?,
+        latest_captured_at: row.get(8)?,
+    })
+}
+
+fn fts_match_query(search: &str) -> Option<String> {
+    let tokens = search
+        .split(|character: char| !character.is_alphanumeric())
+        .map(str::trim)
+        .filter(|token| !token.is_empty())
+        .map(|token| format!("\"{}\"", token.replace('"', "\"\"")))
+        .collect::<Vec<_>>();
+
+    (!tokens.is_empty()).then(|| tokens.join(" AND "))
 }
 
 fn storage_key(item: &ContentItem, post_id: Option<&str>, normalized_text: &str) -> Option<String> {
@@ -880,6 +1052,106 @@ mod tests {
         assert_eq!(stats.items_with_stable_id, 2);
         assert!(stats.first_seen_at_unix_ms.is_some());
         assert!(stats.last_seen_at_unix_ms.is_some());
+
+        let _ = std::fs::remove_dir_all(db_path.parent().unwrap().parent().unwrap());
+    }
+
+    #[test]
+    fn lists_content_by_recent_seen_time() {
+        let db_path = temp_db_path("lists-content");
+        let mut store = Store::open(&db_path).expect("store should open");
+
+        store
+            .record_batch(&batch(
+                "x.com",
+                vec![item("client-1", Some("123"), "first post")],
+            ))
+            .expect("first batch should store");
+        std::thread::sleep(std::time::Duration::from_millis(1));
+        store
+            .record_batch(&batch(
+                "x.com",
+                vec![item("client-2", Some("456"), "second post")],
+            ))
+            .expect("second batch should store");
+
+        let page = store
+            .content(ContentQuery {
+                search: None,
+                limit: 100,
+                offset: 0,
+            })
+            .expect("content should load");
+
+        assert_eq!(page.total_matching, 2);
+        assert_eq!(page.items.len(), 2);
+        assert_eq!(page.items[0].content_id.as_deref(), Some("456"));
+        assert_eq!(page.items[0].content_kind, "post");
+        assert_eq!(page.items[0].snippet, None);
+        assert_eq!(page.items[1].content_id.as_deref(), Some("123"));
+
+        let _ = std::fs::remove_dir_all(db_path.parent().unwrap().parent().unwrap());
+    }
+
+    #[test]
+    fn searches_content_with_fts_index() {
+        let db_path = temp_db_path("searches-content");
+        let mut store = Store::open(&db_path).expect("store should open");
+
+        store
+            .record_batch(&batch(
+                "x.com",
+                vec![
+                    item("client-1", Some("123"), "Codex makes local search useful"),
+                    item("client-2", Some("456"), "unrelated post"),
+                ],
+            ))
+            .expect("batch should store");
+
+        let page = store
+            .content(ContentQuery {
+                search: Some("codex search".into()),
+                limit: 100,
+                offset: 0,
+            })
+            .expect("search should load");
+
+        assert_eq!(page.total_matching, 1);
+        assert_eq!(page.items.len(), 1);
+        assert_eq!(page.items[0].content_id.as_deref(), Some("123"));
+        assert_eq!(page.items[0].text, "Codex makes local search useful");
+        assert_eq!(
+            page.items[0].snippet.as_deref(),
+            Some("Codex makes local search useful")
+        );
+
+        let _ = std::fs::remove_dir_all(db_path.parent().unwrap().parent().unwrap());
+    }
+
+    #[test]
+    fn search_index_is_rebuilt_for_existing_rows_on_open() {
+        let db_path = temp_db_path("rebuilds-search");
+        {
+            let mut store = Store::open(&db_path).expect("store should open");
+            store
+                .record_batch(&batch(
+                    "x.com",
+                    vec![item("client-1", Some("123"), "persistent searchable text")],
+                ))
+                .expect("batch should store");
+        }
+
+        let store = Store::open(&db_path).expect("store should reopen");
+        let page = store
+            .content(ContentQuery {
+                search: Some("persistent".into()),
+                limit: 100,
+                offset: 0,
+            })
+            .expect("search should load");
+
+        assert_eq!(page.total_matching, 1);
+        assert_eq!(page.items[0].content_id.as_deref(), Some("123"));
 
         let _ = std::fs::remove_dir_all(db_path.parent().unwrap().parent().unwrap());
     }

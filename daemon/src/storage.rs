@@ -107,6 +107,59 @@ pub struct ContentStats {
     pub last_seen_at_unix_ms: Option<i64>,
 }
 
+/// Query options for listing or searching stored content.
+#[derive(Debug, Clone)]
+pub struct ContentQuery {
+    /// Optional full-text search query.
+    pub search: Option<String>,
+    /// Maximum number of rows to return.
+    pub limit: usize,
+    /// Number of matching rows to skip.
+    pub offset: usize,
+}
+
+/// Page of stored content rows.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ContentPage {
+    /// Number of matching rows before pagination.
+    pub total_matching: usize,
+    /// Maximum number of rows requested.
+    pub limit: usize,
+    /// Number of matching rows skipped.
+    pub offset: usize,
+    /// Matching stored content rows.
+    pub items: Vec<StoredContentItem>,
+}
+
+/// Stored content row returned by inspection endpoints.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct StoredContentItem {
+    /// Logical content kind, such as `post`.
+    pub content_kind: String,
+    /// Stable storage key used by OwnWeb.
+    pub storage_key: String,
+    /// Stable source content ID when known.
+    pub content_id: Option<String>,
+    /// Canonical or latest captured URL when known.
+    pub url: Option<String>,
+    /// Author or account handle when known.
+    pub author: Option<String>,
+    /// Latest stored text.
+    pub text: String,
+    /// Search result excerpt when a search query was used.
+    pub snippet: Option<String>,
+    /// First time this item was seen.
+    pub first_seen_at_unix_ms: i64,
+    /// Most recent time this item was seen.
+    pub last_seen_at_unix_ms: i64,
+    /// Number of times this item has been stored.
+    pub seen_count: i64,
+    /// Latest client-side capture timestamp.
+    pub latest_captured_at: Option<String>,
+}
+
 /// Query options for listing content rules.
 #[derive(Debug, Clone)]
 pub struct RuleQuery {
@@ -261,6 +314,15 @@ impl ContentStore {
             .lock()
             .expect("X storage mutex should not be poisoned");
         db.content_stats()
+    }
+
+    /// Lists or searches stored X/Twitter content.
+    pub fn x_content(&self, query: ContentQuery) -> Result<ContentPage> {
+        let db = self
+            .x_com
+            .lock()
+            .expect("X storage mutex should not be poisoned");
+        db.content(query)
     }
 }
 

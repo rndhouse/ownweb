@@ -3,8 +3,8 @@ use crate::{
     core::{DomAnalysisBatch, DomCommand, DomElementSnapshot, FeedbackKind, PageSnapshot},
     sites,
     storage::{
-        ContentRule, ContentStats, ContentStore, RuleQuery, StorageError, XDislikeQuery,
-        XDislikedPost,
+        ContentQuery, ContentRule, ContentStats, ContentStore, RuleQuery, StorageError,
+        XDislikeQuery, XDislikedPost,
     },
 };
 use axum::{
@@ -23,6 +23,8 @@ use tower_http::cors::{Any, CorsLayer};
 use tracing::{debug, info, warn};
 
 const LOG_CAPTURED_CONTENT_ENV: &str = "OWNWEB_LOG_CAPTURED_CONTENT";
+const DEFAULT_CONTENT_LIMIT: usize = 100;
+const MAX_CONTENT_LIMIT: usize = 500;
 const DEFAULT_DISLIKE_LIMIT: usize = 100;
 const MAX_DISLIKE_LIMIT: usize = 500;
 const DEFAULT_RULE_LIMIT: usize = 100;
@@ -41,6 +43,7 @@ pub fn router() -> Result<Router, StorageError> {
         .route("/v1/events", get(events_ws))
         .route("/v1/dom/analyze", post(analyze_dom))
         .route("/v1/dom/feedback", post(dom_feedback))
+        .route("/v1/content", get(content))
         .route("/v1/content/stats", get(content_stats))
         .route("/v1/dislikes", get(dislikes))
         .route("/v1/rules", get(rules))
@@ -130,6 +133,38 @@ async fn dislikes(
     Ok(Json(DislikesResponse {
         site: site.as_str(),
         active,
+        total_matching: page.total_matching,
+        limit: page.limit,
+        offset: page.offset,
+        items: page.items,
+    }))
+}
+
+async fn content(
+    State(state): State<AppState>,
+    Query(query): Query<ContentListQuery>,
+) -> Result<Json<ContentListResponse>, ApiError> {
+    let site = SiteScope::from_param(query.site.as_deref())?;
+    let search = query
+        .q
+        .map(|search| search.trim().to_string())
+        .filter(|search| !search.is_empty());
+    let limit = query
+        .limit
+        .unwrap_or(DEFAULT_CONTENT_LIMIT)
+        .min(MAX_CONTENT_LIMIT);
+    let offset = query.offset.unwrap_or(0);
+    let page = match site {
+        SiteScope::XCom => state.content_store.x_content(ContentQuery {
+            search: search.clone(),
+            limit,
+            offset,
+        })?,
+    };
+
+    Ok(Json(ContentListResponse {
+        site: site.as_str(),
+        query: search,
         total_matching: page.total_matching,
         limit: page.limit,
         offset: page.offset,
@@ -376,6 +411,30 @@ pub struct DomFeedbackRequest {
 pub struct DomFeedbackResponse {
     /// Commands for the extension's generic DOM executor.
     pub commands: Vec<DomCommand>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ContentListQuery {
+    /// Site scope for the request, such as `x.com`.
+    site: Option<String>,
+    /// Optional full-text search query.
+    q: Option<String>,
+    /// Maximum number of rows to return. Defaults to 100 and is capped at 500.
+    limit: Option<usize>,
+    /// Number of matching rows to skip.
+    offset: Option<usize>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ContentListResponse {
+    site: &'static str,
+    query: Option<String>,
+    total_matching: usize,
+    limit: usize,
+    offset: usize,
+    items: Vec<crate::storage::StoredContentItem>,
 }
 
 #[derive(Debug, Deserialize)]

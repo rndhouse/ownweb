@@ -88,6 +88,7 @@ RUST_LOG=debug
 - `GET /v1/events`
 - `POST /v1/dom/analyze`
 - `POST /v1/dom/feedback`
+- `GET /v1/content?site=x.com&q=codex`
 - `GET /v1/content/stats?site=x.com`
 - `GET /v1/dislikes?site=x.com`
 - `GET /v1/rules?site=x.com`
@@ -100,8 +101,10 @@ identified posts, then receives `final` commands after local analysis finishes.
 shape and returns final DOM commands in one response. `/v1/dom/feedback`
 records `thumbsDown`, `undoThumbsDown`, and `updateReason` signals for one DOM
 region. Site-scoped inspection endpoints keep the path generic and take the
-site scope through the `site` query parameter. `/v1/content/stats` returns
-unique stored content rows and total captured encounters for the selected site.
+site scope through the `site` query parameter. `/v1/content` lists recent stored
+content or searches it with SQLite FTS5 when `q` is provided. `/v1/content/stats`
+returns unique stored content rows and total captured encounters for the
+selected site.
 
 Request shape:
 
