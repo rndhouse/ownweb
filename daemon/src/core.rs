@@ -209,23 +209,6 @@ impl ContentDecision {
             confidence: Some(confidence),
         }
     }
-
-    /// Creates a decision that dims content.
-    pub fn dim(
-        client_id: impl Into<String>,
-        label: impl Into<String>,
-        reason: impl Into<String>,
-        confidence: f32,
-    ) -> Self {
-        Self {
-            client_id: client_id.into(),
-            action: DecisionAction::Dim,
-            label: Some(label.into()),
-            reason: Some(reason.into()),
-            replacement_text: None,
-            confidence: Some(confidence),
-        }
-    }
 }
 
 /// A command that the browser extension can apply to the live DOM.

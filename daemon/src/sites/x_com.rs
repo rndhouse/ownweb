@@ -10,46 +10,6 @@ use serde_json::json;
 use std::collections::HashMap;
 use tracing::{debug, warn, Level};
 
-const SPAM_TERMS: &[&str] = &[
-    "airdrop",
-    "crypto giveaway",
-    "guaranteed returns",
-    "100x",
-    "dm me",
-    "link in bio",
-    "free money",
-];
-
-const AI_TERMS: &[&str] = &[
-    "as an ai",
-    "delve",
-    "unlock the power",
-    "game-changer",
-    "in today's fast-paced",
-    "revolutionize",
-    "seamlessly",
-];
-
-const REVIEW_TERMS: &[&str] = &[
-    "giveaway",
-    "promo",
-    "discount",
-    "limited time",
-    "claim now",
-    "click here",
-    "subscribe",
-    "join my",
-    "join our",
-    "discord.gg",
-    "t.me/",
-    "telegram",
-    "whatsapp",
-    "onlyfans",
-    "patreon",
-];
-
-const REVIEW_ALL_ENV: &str = "OWNWEB_X_REVIEW_ALL";
-
 /// Interprets X/Twitter DOM snapshots and returns browser DOM commands.
 pub async fn analyze_dom(
     batch: &DomAnalysisBatch,
@@ -142,10 +102,9 @@ fn record_feedback(
 }
 
 async fn decide_items(items: &[ContentItem], ai_analyzer: &AiAnalyzer) -> Vec<ContentDecision> {
-    let review_all = env_flag_default(REVIEW_ALL_ENV, true);
     let ai_items: Vec<_> = items
         .iter()
-        .filter(|item| should_ask_codex(item, review_all))
+        .filter(|item| should_ask_codex(item))
         .cloned()
         .collect();
 
@@ -161,10 +120,6 @@ async fn decide_items(items: &[ContentItem], ai_analyzer: &AiAnalyzer) -> Vec<Co
                 .map(|item| {
                     if let Some(opinion) = opinions_by_id.remove(&item.client_id) {
                         reviewed_item_decision(opinion)
-                    } else if review_all && has_prompt_content(item) {
-                        ContentDecision::keep(item.client_id.clone())
-                    } else if should_ask_codex(item, review_all) {
-                        classify_item(item)
                     } else {
                         ContentDecision::keep(item.client_id.clone())
                     }
@@ -175,13 +130,7 @@ async fn decide_items(items: &[ContentItem], ai_analyzer: &AiAnalyzer) -> Vec<Co
 
     items
         .iter()
-        .map(|item| {
-            if review_all && has_prompt_content(item) {
-                ContentDecision::keep(item.client_id.clone())
-            } else {
-                classify_item(item)
-            }
-        })
+        .map(|item| ContentDecision::keep(item.client_id.clone()))
         .collect()
 }
 
@@ -235,10 +184,9 @@ fn cached_decide_items(
     items: &[ContentItem],
     ai_analyzer: &AiAnalyzer,
 ) -> Option<Vec<ContentDecision>> {
-    let review_all = env_flag_default(REVIEW_ALL_ENV, true);
     let ai_items: Vec<_> = items
         .iter()
-        .filter(|item| should_ask_codex(item, review_all))
+        .filter(|item| should_ask_codex(item))
         .cloned()
         .collect();
     let mut opinions_by_id: HashMap<_, _> = if ai_items.is_empty() {
@@ -255,10 +203,10 @@ fn cached_decide_items(
     for item in items {
         if let Some(opinion) = opinions_by_id.remove(&item.client_id) {
             decisions.push(reviewed_item_decision(opinion));
-        } else if should_ask_codex(item, review_all) {
+        } else if should_ask_codex(item) {
             return None;
         } else {
-            decisions.push(classify_item(item));
+            decisions.push(ContentDecision::keep(item.client_id.clone()));
         }
     }
 
@@ -410,44 +358,8 @@ fn commands_from_decisions(
         .collect()
 }
 
-fn classify_item(item: &ContentItem) -> ContentDecision {
-    let normalized = item.text.to_lowercase();
-    let spam_hits = count_matches(&normalized, SPAM_TERMS);
-    let ai_hits = count_matches(&normalized, AI_TERMS);
-
-    if item.text.trim().is_empty() {
-        return ContentDecision::keep(item.client_id.clone());
-    }
-
-    if spam_hits >= 2 {
-        return ContentDecision::hide(
-            item.client_id.clone(),
-            "OwnWeb: spam",
-            "Matched promotional spam heuristics",
-            0.9,
-        );
-    }
-
-    if ai_hits >= 2 {
-        return ContentDecision::dim(
-            item.client_id.clone(),
-            "OwnWeb: likely generated",
-            "Matched generated-writing heuristics",
-            0.72,
-        );
-    }
-
-    ContentDecision::keep(item.client_id.clone())
-}
-
-fn should_ask_codex(item: &ContentItem, review_all: bool) -> bool {
-    let normalized = item.text.to_lowercase();
+fn should_ask_codex(item: &ContentItem) -> bool {
     has_prompt_content(item)
-        && (review_all
-            || count_matches(&normalized, SPAM_TERMS) > 0
-            || count_matches(&normalized, AI_TERMS) > 0
-            || count_matches(&normalized, REVIEW_TERMS) > 0
-            || has_url_signal(&normalized))
 }
 
 fn has_prompt_content(item: &ContentItem) -> bool {
@@ -490,25 +402,6 @@ fn author_handle(url: &str) -> Option<String> {
     let handle = path.split_once("/status/")?.0.trim_matches('/');
 
     (!handle.is_empty()).then(|| format!("@{handle}"))
-}
-
-fn has_url_signal(text: &str) -> bool {
-    text.contains("http://")
-        || text.contains("https://")
-        || text.contains("www.")
-        || text.contains(".com")
-        || text.contains(".io")
-        || text.contains(".xyz")
-}
-
-fn count_matches(text: &str, terms: &[&str]) -> usize {
-    terms.iter().filter(|term| text.contains(**term)).count()
-}
-
-fn env_flag_default(name: &str, default: bool) -> bool {
-    std::env::var(name)
-        .map(|value| value != "0" && !value.eq_ignore_ascii_case("false"))
-        .unwrap_or(default)
 }
 
 struct ExtractedItem {
@@ -727,26 +620,21 @@ mod tests {
     }
 
     #[test]
-    fn ordinary_posts_can_skip_codex_when_review_all_is_disabled() {
-        assert!(!should_ask_codex(&item("Just a normal post.", None), false));
+    fn posts_with_text_go_to_codex_for_review() {
+        assert!(should_ask_codex(&item("Just a normal post.", None)));
     }
 
     #[test]
-    fn review_all_sends_ordinary_posts_to_codex_for_review() {
-        assert!(should_ask_codex(&item("Just a normal post.", None), true));
+    fn url_only_posts_go_to_codex_for_review() {
+        assert!(should_ask_codex(&item(
+            "   ",
+            Some("https://x.com/user/status/1")
+        )));
     }
 
     #[test]
-    fn review_all_can_send_url_only_posts_to_codex() {
-        assert!(should_ask_codex(
-            &item("   ", Some("https://x.com/user/status/1")),
-            true
-        ));
-    }
-
-    #[test]
-    fn empty_posts_without_url_do_not_go_to_codex_in_review_all_mode() {
-        assert!(!should_ask_codex(&item("   ", None), true));
+    fn empty_posts_without_url_do_not_go_to_codex() {
+        assert!(!should_ask_codex(&item("   ", None)));
     }
 
     #[test]

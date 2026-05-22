@@ -80,13 +80,6 @@ OWNWEB_X_SUMMARY_CACHE_TTL_SECS=86400
 RUST_LOG=debug
 ```
 
-To restore the faster filtered mode later, only send suspicious or
-promotion-like posts through Codex:
-
-```sh
-OWNWEB_X_REVIEW_ALL=0 cargo run
-```
-
 ## Endpoints
 
 - `GET /health`
