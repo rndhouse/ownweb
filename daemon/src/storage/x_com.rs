@@ -1,6 +1,7 @@
 use crate::{
     core::{AnalysisBatch, ContentItem, FeedbackKind},
     storage::{
+        ContentAnnotation, ContentAnnotationInput, ContentAnnotationPage, ContentAnnotationQuery,
         ContentPage, ContentQuery, ContentRule, ContentStats, RuleExamples, RulePage, RuleQuery,
         StoredContentItem, XDislikePage, XDislikeQuery, XDislikedPost,
     },
@@ -115,6 +116,30 @@ impl Store {
 
             CREATE INDEX IF NOT EXISTS content_rules_status_priority_idx
                 ON content_rules(status, priority);
+
+            CREATE TABLE IF NOT EXISTS content_annotations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                storage_key TEXT NOT NULL,
+                content_kind TEXT NOT NULL,
+                annotation_type TEXT NOT NULL,
+                annotation_key TEXT NOT NULL,
+                value_json TEXT NOT NULL,
+                value_text TEXT NOT NULL,
+                confidence REAL,
+                source TEXT NOT NULL,
+                created_at_unix_ms INTEGER NOT NULL,
+                updated_at_unix_ms INTEGER NOT NULL,
+                UNIQUE(storage_key, annotation_type, annotation_key, source)
+            );
+
+            CREATE INDEX IF NOT EXISTS content_annotations_storage_key_idx
+                ON content_annotations(storage_key);
+            CREATE INDEX IF NOT EXISTS content_annotations_type_key_idx
+                ON content_annotations(annotation_type, annotation_key);
+            CREATE INDEX IF NOT EXISTS content_annotations_source_idx
+                ON content_annotations(source);
+            CREATE INDEX IF NOT EXISTS content_annotations_updated_at_idx
+                ON content_annotations(updated_at_unix_ms);
             ",
         )?;
         migrate_search(&connection)?;
@@ -505,6 +530,173 @@ impl Store {
         }
     }
 
+    pub(super) fn upsert_content_annotation(
+        &mut self,
+        input: ContentAnnotationInput,
+    ) -> super::Result<ContentAnnotation> {
+        let storage_key = input.storage_key.trim().to_string();
+        let content_kind =
+            clean_optional(Some(input.content_kind.as_str())).unwrap_or_else(|| "post".into());
+        let annotation_type = input.annotation_type.trim().to_string();
+        let annotation_key = input.key.trim().to_string();
+        let source = input.source.trim().to_string();
+        let value_json = serde_json::to_string(&input.value)?;
+        let value_text = annotation_value_text(&input.value);
+        let now = now_unix_ms();
+
+        self.connection.execute(
+            "
+            INSERT INTO content_annotations (
+                storage_key,
+                content_kind,
+                annotation_type,
+                annotation_key,
+                value_json,
+                value_text,
+                confidence,
+                source,
+                created_at_unix_ms,
+                updated_at_unix_ms
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?9)
+            ON CONFLICT(storage_key, annotation_type, annotation_key, source) DO UPDATE SET
+                content_kind = excluded.content_kind,
+                value_json = excluded.value_json,
+                value_text = excluded.value_text,
+                confidence = excluded.confidence,
+                updated_at_unix_ms = excluded.updated_at_unix_ms
+            ",
+            params![
+                storage_key,
+                content_kind,
+                annotation_type,
+                annotation_key,
+                value_json,
+                value_text,
+                input.confidence,
+                source,
+                now,
+            ],
+        )?;
+
+        let annotation = self.connection.query_row(
+            "
+            SELECT
+                id,
+                storage_key,
+                content_kind,
+                annotation_type,
+                annotation_key,
+                value_json,
+                confidence,
+                source,
+                created_at_unix_ms,
+                updated_at_unix_ms
+            FROM content_annotations
+            WHERE storage_key = ?1
+                AND annotation_type = ?2
+                AND annotation_key = ?3
+                AND source = ?4
+            ",
+            params![
+                input.storage_key.trim(),
+                input.annotation_type.trim(),
+                input.key.trim(),
+                input.source.trim(),
+            ],
+            content_annotation_from_row,
+        )?;
+
+        debug!(
+            target: "ownweb_daemon::storage::x_com",
+            storage_key = annotation.storage_key.as_str(),
+            annotation_type = annotation.annotation_type.as_str(),
+            key = annotation.key.as_str(),
+            source = annotation.source.as_str(),
+            "stored X content annotation"
+        );
+
+        Ok(annotation)
+    }
+
+    pub(super) fn content_annotations(
+        &self,
+        query: ContentAnnotationQuery,
+    ) -> super::Result<ContentAnnotationPage> {
+        let storage_key =
+            annotation_storage_key(query.storage_key.as_deref(), query.content_id.as_deref());
+        let content_kind = clean_optional(query.content_kind.as_deref());
+        let annotation_type = clean_optional(query.annotation_type.as_deref());
+        let annotation_key = clean_optional(query.key.as_deref());
+        let source = clean_optional(query.source.as_deref());
+        let limit = sqlite_limit(query.limit);
+        let offset = sqlite_limit(query.offset);
+
+        let total_matching = self.connection.query_row(
+            "
+            SELECT COUNT(*)
+            FROM content_annotations
+            WHERE (?1 IS NULL OR storage_key = ?1)
+                AND (?2 IS NULL OR content_kind = ?2)
+                AND (?3 IS NULL OR annotation_type = ?3)
+                AND (?4 IS NULL OR annotation_key = ?4)
+                AND (?5 IS NULL OR source = ?5)
+            ",
+            params![
+                storage_key.as_deref(),
+                content_kind.as_deref(),
+                annotation_type.as_deref(),
+                annotation_key.as_deref(),
+                source.as_deref(),
+            ],
+            |row| row.get::<_, i64>(0),
+        )?;
+
+        let mut statement = self.connection.prepare(
+            "
+            SELECT
+                id,
+                storage_key,
+                content_kind,
+                annotation_type,
+                annotation_key,
+                value_json,
+                confidence,
+                source,
+                created_at_unix_ms,
+                updated_at_unix_ms
+            FROM content_annotations
+            WHERE (?1 IS NULL OR storage_key = ?1)
+                AND (?2 IS NULL OR content_kind = ?2)
+                AND (?3 IS NULL OR annotation_type = ?3)
+                AND (?4 IS NULL OR annotation_key = ?4)
+                AND (?5 IS NULL OR source = ?5)
+            ORDER BY updated_at_unix_ms DESC, id DESC
+            LIMIT ?6 OFFSET ?7
+            ",
+        )?;
+        let items = statement
+            .query_map(
+                params![
+                    storage_key.as_deref(),
+                    content_kind.as_deref(),
+                    annotation_type.as_deref(),
+                    annotation_key.as_deref(),
+                    source.as_deref(),
+                    limit,
+                    offset,
+                ],
+                content_annotation_from_row,
+            )?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+
+        Ok(ContentAnnotationPage {
+            total_matching: total_matching.max(0) as usize,
+            limit: limit as usize,
+            offset: offset as usize,
+            items,
+        })
+    }
+
     fn list_content(&self, limit: i64, offset: i64) -> super::Result<ContentPage> {
         let total_matching =
             self.connection
@@ -835,6 +1027,38 @@ fn content_item_from_row(
     })
 }
 
+fn content_annotation_from_row(row: &Row<'_>) -> rusqlite::Result<ContentAnnotation> {
+    let value_json: String = row.get(5)?;
+    let value = serde_json::from_str(&value_json).map_err(|error| {
+        rusqlite::Error::FromSqlConversionFailure(5, rusqlite::types::Type::Text, Box::new(error))
+    })?;
+
+    Ok(ContentAnnotation {
+        id: row.get(0)?,
+        storage_key: row.get(1)?,
+        content_kind: row.get(2)?,
+        annotation_type: row.get(3)?,
+        key: row.get(4)?,
+        value,
+        confidence: row.get(6)?,
+        source: row.get(7)?,
+        created_at_unix_ms: row.get(8)?,
+        updated_at_unix_ms: row.get(9)?,
+    })
+}
+
+fn annotation_storage_key(storage_key: Option<&str>, content_id: Option<&str>) -> Option<String> {
+    clean_optional(storage_key)
+        .or_else(|| clean_optional(content_id).map(|content_id| format!("x:id:{content_id}")))
+}
+
+fn annotation_value_text(value: &serde_json::Value) -> String {
+    match value {
+        serde_json::Value::String(text) => text.clone(),
+        _ => serde_json::to_string(value).unwrap_or_default(),
+    }
+}
+
 fn fts_match_query(search: &str) -> Option<String> {
     let tokens = search
         .split(|character: char| !character.is_alphanumeric())
@@ -935,7 +1159,7 @@ fn now_unix_ms() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::Value;
+    use serde_json::{json, Value};
     use std::path::PathBuf;
 
     fn item(client_id: &str, post_id: Option<&str>, text: &str) -> ContentItem {
@@ -1327,6 +1551,129 @@ mod tests {
         assert_eq!(inactive_page.items.len(), 1);
         assert_eq!(inactive_page.items[0].post_id.as_deref(), Some("456"));
         assert!(!inactive_page.items[0].active);
+
+        let _ = std::fs::remove_dir_all(db_path.parent().unwrap().parent().unwrap());
+    }
+
+    #[test]
+    fn upserts_content_annotations_by_identity() {
+        let db_path = temp_db_path("upserts-annotations");
+        let mut store = Store::open(&db_path).expect("store should open");
+
+        let first = store
+            .upsert_content_annotation(ContentAnnotationInput {
+                storage_key: "x:id:123".into(),
+                content_kind: "post".into(),
+                annotation_type: "tag".into(),
+                key: "topics".into(),
+                value: json!(["ai"]),
+                confidence: Some(0.4),
+                source: "agent:test".into(),
+            })
+            .expect("first annotation should store");
+        let second = store
+            .upsert_content_annotation(ContentAnnotationInput {
+                storage_key: "x:id:123".into(),
+                content_kind: "post".into(),
+                annotation_type: "tag".into(),
+                key: "topics".into(),
+                value: json!(["ai", "coding"]),
+                confidence: Some(0.9),
+                source: "agent:test".into(),
+            })
+            .expect("second annotation should update");
+
+        let count: i64 = store
+            .connection
+            .query_row("SELECT COUNT(*) FROM content_annotations", [], |row| {
+                row.get(0)
+            })
+            .expect("annotation count should load");
+
+        assert_eq!(first.id, second.id);
+        assert_eq!(count, 1);
+        assert_eq!(second.value, json!(["ai", "coding"]));
+        assert_eq!(second.confidence, Some(0.9));
+        assert_eq!(second.created_at_unix_ms, first.created_at_unix_ms);
+        assert!(second.updated_at_unix_ms >= second.created_at_unix_ms);
+
+        let _ = std::fs::remove_dir_all(db_path.parent().unwrap().parent().unwrap());
+    }
+
+    #[test]
+    fn lists_content_annotations_for_storage_key_or_content_id() {
+        let db_path = temp_db_path("lists-annotations");
+        let mut store = Store::open(&db_path).expect("store should open");
+
+        store
+            .upsert_content_annotation(ContentAnnotationInput {
+                storage_key: "x:id:123".into(),
+                content_kind: "post".into(),
+                annotation_type: "note".into(),
+                key: "summary".into(),
+                value: json!("This post is about local AI tooling."),
+                confidence: Some(0.8),
+                source: "agent:test".into(),
+            })
+            .expect("note should store");
+        store
+            .upsert_content_annotation(ContentAnnotationInput {
+                storage_key: "x:id:123".into(),
+                content_kind: "post".into(),
+                annotation_type: "tag".into(),
+                key: "topics".into(),
+                value: json!(["local-ai", "tools"]),
+                confidence: None,
+                source: "agent:test".into(),
+            })
+            .expect("tags should store");
+        store
+            .upsert_content_annotation(ContentAnnotationInput {
+                storage_key: "x:id:456".into(),
+                content_kind: "post".into(),
+                annotation_type: "note".into(),
+                key: "summary".into(),
+                value: json!("Different post."),
+                confidence: None,
+                source: "agent:test".into(),
+            })
+            .expect("other note should store");
+
+        let page = store
+            .content_annotations(ContentAnnotationQuery {
+                storage_key: None,
+                content_id: Some("123".into()),
+                content_kind: None,
+                annotation_type: None,
+                key: None,
+                source: Some("agent:test".into()),
+                limit: 100,
+                offset: 0,
+            })
+            .expect("annotations should load");
+        let note_page = store
+            .content_annotations(ContentAnnotationQuery {
+                storage_key: Some("x:id:123".into()),
+                content_id: None,
+                content_kind: None,
+                annotation_type: Some("note".into()),
+                key: Some("summary".into()),
+                source: None,
+                limit: 100,
+                offset: 0,
+            })
+            .expect("filtered annotations should load");
+
+        assert_eq!(page.total_matching, 2);
+        assert_eq!(page.items.len(), 2);
+        assert!(page.items.iter().all(|item| item.storage_key == "x:id:123"));
+        assert_eq!(note_page.total_matching, 1);
+        assert_eq!(note_page.items[0].annotation_type, "note");
+        assert_eq!(note_page.items[0].key, "summary");
+        assert_eq!(
+            note_page.items[0].value,
+            json!("This post is about local AI tooling.")
+        );
 
         let _ = std::fs::remove_dir_all(db_path.parent().unwrap().parent().unwrap());
     }

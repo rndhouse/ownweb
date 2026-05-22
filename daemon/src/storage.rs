@@ -2,6 +2,7 @@ mod x_com;
 
 use crate::core::{AnalysisBatch, ContentItem, FeedbackKind};
 use serde::Serialize;
+use serde_json::Value;
 use std::{
     fmt,
     io::ErrorKind,
@@ -158,6 +159,86 @@ pub struct StoredContentItem {
     pub seen_count: i64,
     /// Latest client-side capture timestamp.
     pub latest_captured_at: Option<String>,
+}
+
+/// Agent- or user-supplied metadata to attach to one stored content item.
+#[derive(Debug, Clone)]
+pub struct ContentAnnotationInput {
+    /// Stable storage key returned by content inspection endpoints.
+    pub storage_key: String,
+    /// Logical content kind, such as `post`.
+    pub content_kind: String,
+    /// Annotation category, such as `tag`, `note`, or `topic`.
+    pub annotation_type: String,
+    /// Annotation key within its category.
+    pub key: String,
+    /// Arbitrary annotation payload.
+    pub value: Value,
+    /// Optional model confidence from 0.0 to 1.0.
+    pub confidence: Option<f64>,
+    /// Source that created or updated this annotation.
+    pub source: String,
+}
+
+/// Query options for listing stored content annotations.
+#[derive(Debug, Clone)]
+pub struct ContentAnnotationQuery {
+    /// Optional stable storage key filter.
+    pub storage_key: Option<String>,
+    /// Optional site-native content ID filter.
+    pub content_id: Option<String>,
+    /// Optional logical content kind filter.
+    pub content_kind: Option<String>,
+    /// Optional annotation category filter.
+    pub annotation_type: Option<String>,
+    /// Optional annotation key filter.
+    pub key: Option<String>,
+    /// Optional source filter.
+    pub source: Option<String>,
+    /// Maximum number of rows to return.
+    pub limit: usize,
+    /// Number of matching rows to skip.
+    pub offset: usize,
+}
+
+/// Page of stored content annotations.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ContentAnnotationPage {
+    /// Number of matching rows before pagination.
+    pub total_matching: usize,
+    /// Maximum number of rows requested.
+    pub limit: usize,
+    /// Number of matching rows skipped.
+    pub offset: usize,
+    /// Matching annotations.
+    pub items: Vec<ContentAnnotation>,
+}
+
+/// Stored content annotation returned by inspection endpoints.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ContentAnnotation {
+    /// Database row ID for this annotation.
+    pub id: i64,
+    /// Stable storage key used by OwnWeb.
+    pub storage_key: String,
+    /// Logical content kind, such as `post`.
+    pub content_kind: String,
+    /// Annotation category, such as `tag`, `note`, or `topic`.
+    pub annotation_type: String,
+    /// Annotation key within its category.
+    pub key: String,
+    /// Arbitrary annotation payload.
+    pub value: Value,
+    /// Optional model confidence from 0.0 to 1.0.
+    pub confidence: Option<f64>,
+    /// Source that created or updated this annotation.
+    pub source: String,
+    /// Annotation creation timestamp.
+    pub created_at_unix_ms: i64,
+    /// Annotation update timestamp.
+    pub updated_at_unix_ms: i64,
 }
 
 /// Query options for listing content rules.
@@ -323,6 +404,30 @@ impl ContentStore {
             .lock()
             .expect("X storage mutex should not be poisoned");
         db.content(query)
+    }
+
+    /// Creates or updates an annotation for stored X/Twitter content.
+    pub fn x_upsert_content_annotation(
+        &self,
+        input: ContentAnnotationInput,
+    ) -> Result<ContentAnnotation> {
+        let mut db = self
+            .x_com
+            .lock()
+            .expect("X storage mutex should not be poisoned");
+        db.upsert_content_annotation(input)
+    }
+
+    /// Lists annotations for stored X/Twitter content.
+    pub fn x_content_annotations(
+        &self,
+        query: ContentAnnotationQuery,
+    ) -> Result<ContentAnnotationPage> {
+        let db = self
+            .x_com
+            .lock()
+            .expect("X storage mutex should not be poisoned");
+        db.content_annotations(query)
     }
 }
 
