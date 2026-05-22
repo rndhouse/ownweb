@@ -5,6 +5,13 @@ const MAX_TEXT_CHARS = 20000;
 const MAX_HTML_CHARS = 60000;
 const MAX_LINKS = 80;
 const MAX_ATTRIBUTES = 40;
+const FEEDBACK_REASON_PRESETS = [
+  "Low information",
+  "Rage bait",
+  "Spam",
+  "AI slop",
+  "Not interested"
+];
 
 let nextGeneratedId = 1;
 let scanTimer = null;
@@ -28,6 +35,7 @@ observer.observe(document.documentElement, {
 });
 
 document.addEventListener("click", handleOwnWebClick, true);
+document.addEventListener("pointerdown", handleOwnWebPointerDown, true);
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (!message || message.type !== "ownweb:applyCommands") {
@@ -276,10 +284,6 @@ function applyCommands(commands) {
       continue;
     }
 
-    if (shouldKeepFeedbackHidden(element, command)) {
-      continue;
-    }
-
     if (command.action === "insertFeedbackControl") {
       insertFeedbackControl(element, command);
       continue;
@@ -328,11 +332,24 @@ function handleOwnWebClick(event) {
 
   const clientId = button.dataset.ownwebClientId || "";
   const element = elementsByClientId.get(clientId);
-  if (!element) {
+  if (!element || button.disabled) {
     return;
   }
 
-  void sendFeedback(element, button);
+  void toggleFeedback(element, button);
+}
+
+function handleOwnWebPointerDown(event) {
+  const target = eventTargetElement(event);
+  const button = target ? target.closest(".ownweb-feedback-button") : null;
+  if (!button || !button.classList.contains("ownweb-feedback-button--active")) {
+    return;
+  }
+
+  button.dataset.ownwebSkipNextReasonBlur = "true";
+  setTimeout(() => {
+    delete button.dataset.ownwebSkipNextReasonBlur;
+  }, 300);
 }
 
 function eventTargetElement(event) {
@@ -345,50 +362,223 @@ function eventTargetElement(event) {
     : null;
 }
 
-async function sendFeedback(element, button) {
-  const snapshot = snapshotElement(element);
-  if (!snapshot) {
-    return;
-  }
+async function toggleFeedback(element, button) {
+  const wasActive = button.classList.contains("ownweb-feedback-button--active");
+  const feedback = wasActive ? "undoThumbsDown" : "thumbsDown";
+  const reason = wasActive ? currentFeedbackReason(element, button) : "";
 
-  if (snapshot.snapshotHash) {
-    element.dataset.ownwebUserHiddenSnapshotHash = snapshot.snapshotHash;
-  }
   button.disabled = true;
   button.dataset.ownwebFeedbackState = "pending";
 
   try {
-    const response = await sendMessage({
-      type: "ownweb:feedback",
-      feedback: "thumbsDown",
-      reason: "",
-      page: pageSnapshot(),
-      element: snapshot
-    });
+    const response = await sendFeedbackEvent(element, feedback, reason);
 
     if (!response || !response.ok) {
       throw new Error(response && response.error ? response.error : "Daemon request failed.");
     }
 
     applyCommands(response.commands || []);
+
+    if (wasActive) {
+      setFeedbackButtonActive(button, false);
+      removeFeedbackReasonPanel(element, button.dataset.ownwebClientId || "");
+    } else {
+      setFeedbackButtonActive(button, true);
+      showFeedbackReasonPanel(element, button);
+    }
   } catch (error) {
-    delete element.dataset.ownwebUserHiddenSnapshotHash;
-    button.disabled = false;
-    button.dataset.ownwebFeedbackState = "unavailable";
+    button.dataset.ownwebFeedbackState = wasActive ? "active" : "unavailable";
     button.title = `OwnWeb feedback unavailable: ${
       error instanceof Error ? error.message : String(error)
     }`;
+  } finally {
+    button.disabled = false;
   }
 }
 
-function shouldKeepFeedbackHidden(element, command) {
-  const hiddenSnapshotHash = element.dataset.ownwebUserHiddenSnapshotHash;
-  if (!hiddenSnapshotHash || command.action === "hide") {
-    return false;
+async function sendFeedbackEvent(element, feedback, reason) {
+  const snapshot = snapshotElement(element);
+  if (!snapshot) {
+    return null;
   }
 
-  const commandSnapshotHash = command.target && command.target.mustMatchSnapshotHash;
-  return !commandSnapshotHash || commandSnapshotHash === hiddenSnapshotHash;
+  return sendMessage({
+    type: "ownweb:feedback",
+    feedback,
+    reason,
+    page: pageSnapshot(),
+    element: snapshot
+  });
+}
+
+function setFeedbackButtonActive(button, active) {
+  const label = active ? "Undo thumbs-down feedback" : "Hide this post";
+  button.classList.toggle("ownweb-feedback-button--active", active);
+  button.dataset.ownwebFeedbackState = active ? "active" : "idle";
+  button.title = label;
+  button.setAttribute("aria-label", label);
+  button.setAttribute("aria-pressed", active ? "true" : "false");
+}
+
+function showFeedbackReasonPanel(element, button) {
+  const clientId = button.dataset.ownwebClientId || "";
+  if (!clientId) {
+    return;
+  }
+
+  const existingPanel = feedbackReasonPanel(element, clientId);
+  if (existingPanel) {
+    const input = existingPanel.querySelector(".ownweb-feedback-reason-input");
+    if (input instanceof HTMLElement) {
+      input.focus();
+    }
+    return;
+  }
+
+  const actionBar = findActionBar(element);
+  if (!actionBar) {
+    return;
+  }
+
+  const panel = createFeedbackReasonPanel(element, button);
+  actionBar.insertAdjacentElement("afterend", panel);
+
+  const input = panel.querySelector(".ownweb-feedback-reason-input");
+  if (input instanceof HTMLElement) {
+    input.focus();
+  }
+}
+
+function createFeedbackReasonPanel(element, button) {
+  const clientId = button.dataset.ownwebClientId || "";
+  const panel = document.createElement("div");
+  const label = document.createElement("div");
+  const chips = document.createElement("div");
+  const input = document.createElement("textarea");
+
+  panel.className = "ownweb-feedback-panel";
+  panel.dataset.ownwebUi = "true";
+  panel.dataset.ownwebClientId = clientId;
+  panel.dataset.ownwebLastReason = "";
+
+  label.className = "ownweb-feedback-panel-label";
+  label.dataset.ownwebUi = "true";
+  label.textContent = "Reason";
+
+  chips.className = "ownweb-feedback-reason-chips";
+  chips.dataset.ownwebUi = "true";
+  for (const reason of FEEDBACK_REASON_PRESETS) {
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = "ownweb-feedback-reason-chip";
+    chip.dataset.ownwebUi = "true";
+    chip.textContent = reason;
+    chip.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation();
+      input.value = reason;
+      queueReasonUpdate(element, button, panel);
+    });
+    chips.append(chip);
+  }
+
+  input.className = "ownweb-feedback-reason-input";
+  input.dataset.ownwebUi = "true";
+  input.rows = 2;
+  input.placeholder = "Add a reason";
+  input.addEventListener("click", (event) => {
+    event.stopPropagation();
+  });
+  input.addEventListener("keydown", (event) => {
+    event.stopPropagation();
+  });
+  input.addEventListener("blur", () => {
+    if (button.dataset.ownwebSkipNextReasonBlur === "true") {
+      return;
+    }
+
+    queueReasonUpdate(element, button, panel);
+  });
+  input.addEventListener("change", () => {
+    queueReasonUpdate(element, button, panel);
+  });
+
+  panel.addEventListener("click", (event) => {
+    event.stopPropagation();
+  }, true);
+  panel.addEventListener("keydown", (event) => {
+    event.stopPropagation();
+  }, true);
+
+  panel.append(label, chips, input);
+  return panel;
+}
+
+function queueReasonUpdate(element, button, panel) {
+  if (!button.classList.contains("ownweb-feedback-button--active")) {
+    return;
+  }
+
+  const input = panel.querySelector(".ownweb-feedback-reason-input");
+  const reason = input instanceof HTMLTextAreaElement ? input.value.trim() : "";
+  if (panel.dataset.ownwebLastReason === reason) {
+    return;
+  }
+
+  panel.dataset.ownwebLastReason = reason;
+  void sendReasonUpdate(element, button, reason);
+}
+
+async function sendReasonUpdate(element, button, reason) {
+  const previousTitle = button.title;
+  button.dataset.ownwebFeedbackState = "pending";
+
+  try {
+    const response = await sendFeedbackEvent(element, "updateReason", reason);
+    if (!response || !response.ok) {
+      throw new Error(response && response.error ? response.error : "Daemon request failed.");
+    }
+
+    applyCommands(response.commands || []);
+    if (button.classList.contains("ownweb-feedback-button--active")) {
+      button.dataset.ownwebFeedbackState = "active";
+    }
+  } catch (error) {
+    button.dataset.ownwebFeedbackState = "active";
+    button.title = `OwnWeb feedback unavailable: ${
+      error instanceof Error ? error.message : String(error)
+    }`;
+    setTimeout(() => {
+      if (button.dataset.ownwebFeedbackState === "active") {
+        button.title = previousTitle;
+      }
+    }, 2500);
+  }
+}
+
+function currentFeedbackReason(element, button) {
+  const clientId = button.dataset.ownwebClientId || "";
+  const panel = feedbackReasonPanel(element, clientId);
+  const input = panel && panel.querySelector(".ownweb-feedback-reason-input");
+  return input instanceof HTMLTextAreaElement ? input.value.trim() : "";
+}
+
+function feedbackReasonPanel(element, clientId) {
+  if (!clientId) {
+    return null;
+  }
+
+  return element.querySelector(
+    `.ownweb-feedback-panel[data-ownweb-client-id="${cssEscape(clientId)}"]`
+  );
+}
+
+function removeFeedbackReasonPanel(element, clientId) {
+  const panel = feedbackReasonPanel(element, clientId);
+  if (panel) {
+    panel.remove();
+  }
 }
 
 function resolveTarget(target) {
@@ -469,6 +659,9 @@ function insertFeedbackControl(element, command) {
   );
   if (existingButton) {
     existingButton.classList.toggle("ownweb-feedback-button--subject", isSubjectPost);
+    if (!existingButton.hasAttribute("aria-pressed")) {
+      existingButton.setAttribute("aria-pressed", "false");
+    }
     return;
   }
 
@@ -512,8 +705,10 @@ function createFeedbackButton(clientId, label, isSubjectPost) {
   button.dataset.ownwebUi = "true";
   button.dataset.ownwebClientId = clientId;
   button.dataset.ownwebFeedback = "thumbsDown";
+  button.dataset.ownwebFeedbackState = "idle";
   button.title = label;
   button.setAttribute("aria-label", label);
+  button.setAttribute("aria-pressed", "false");
   button.append(createThumbsDownIcon());
   return button;
 }

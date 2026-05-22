@@ -1,5 +1,5 @@
 use crate::core::{AnalysisBatch, ContentItem, FeedbackKind};
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
 use std::{
     path::Path,
@@ -67,6 +67,26 @@ impl Store {
                 ON tweet_feedback(post_id);
             CREATE INDEX IF NOT EXISTS tweet_feedback_created_at_idx
                 ON tweet_feedback(created_at_unix_ms);
+
+            CREATE TABLE IF NOT EXISTS tweet_feedback_state (
+                storage_key TEXT PRIMARY KEY,
+                post_id TEXT,
+                active INTEGER NOT NULL,
+                feedback_kind TEXT NOT NULL,
+                reason TEXT NOT NULL,
+                created_at_unix_ms INTEGER NOT NULL,
+                updated_at_unix_ms INTEGER NOT NULL,
+                latest_client_id TEXT NOT NULL,
+                url TEXT,
+                author_handle TEXT,
+                latest_captured_at TEXT,
+                latest_payload_json TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS tweet_feedback_state_active_idx
+                ON tweet_feedback_state(active);
+            CREATE INDEX IF NOT EXISTS tweet_feedback_state_post_id_idx
+                ON tweet_feedback_state(post_id);
             ",
         )?;
 
@@ -163,7 +183,8 @@ impl Store {
             return Ok(false);
         };
 
-        self.connection.execute(
+        let transaction = self.connection.transaction()?;
+        transaction.execute(
             "
             INSERT INTO tweet_feedback (
                 storage_key,
@@ -192,6 +213,50 @@ impl Store {
             ],
         )?;
 
+        transaction.execute(
+            "
+            INSERT INTO tweet_feedback_state (
+                storage_key,
+                post_id,
+                active,
+                feedback_kind,
+                reason,
+                created_at_unix_ms,
+                updated_at_unix_ms,
+                latest_client_id,
+                url,
+                author_handle,
+                latest_captured_at,
+                latest_payload_json
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6, ?7, ?8, ?9, ?10, ?11)
+            ON CONFLICT(storage_key) DO UPDATE SET
+                post_id = COALESCE(excluded.post_id, tweet_feedback_state.post_id),
+                active = excluded.active,
+                feedback_kind = excluded.feedback_kind,
+                reason = excluded.reason,
+                updated_at_unix_ms = excluded.updated_at_unix_ms,
+                latest_client_id = excluded.latest_client_id,
+                url = COALESCE(excluded.url, tweet_feedback_state.url),
+                author_handle = COALESCE(excluded.author_handle, tweet_feedback_state.author_handle),
+                latest_captured_at = excluded.latest_captured_at,
+                latest_payload_json = excluded.latest_payload_json
+            ",
+            params![
+                record.storage_key,
+                record.post_id,
+                feedback_state_active(feedback),
+                record.feedback_kind,
+                record.reason,
+                record.created_at_unix_ms,
+                record.client_id,
+                record.url,
+                record.author_handle,
+                record.captured_at,
+                record.payload_json,
+            ],
+        )?;
+        transaction.commit()?;
+
         debug!(
             target: "ownweb_daemon::storage::x_com",
             storage_key = record.storage_key.as_str(),
@@ -201,6 +266,39 @@ impl Store {
         );
 
         Ok(true)
+    }
+
+    pub(super) fn feedback_state(
+        &self,
+        item: &ContentItem,
+    ) -> super::Result<Option<super::XFeedbackState>> {
+        let post_id = stable_post_id(item);
+        let normalized_text = normalize_text(&item.text);
+        let Some(storage_key) = storage_key(item, post_id.as_deref(), &normalized_text) else {
+            return Ok(None);
+        };
+
+        let state = self
+            .connection
+            .query_row(
+                "
+                SELECT active, reason
+                FROM tweet_feedback_state
+                WHERE storage_key = ?1
+                ",
+                [storage_key],
+                |row| {
+                    let active: i64 = row.get(0)?;
+                    let reason: String = row.get(1)?;
+                    Ok(super::XFeedbackState {
+                        active: active != 0,
+                        reason,
+                    })
+                },
+            )
+            .optional()?;
+
+        Ok(state)
     }
 }
 
@@ -321,6 +419,15 @@ struct StoredTweetFeedbackPayload<'a> {
 fn feedback_kind_name(feedback: FeedbackKind) -> &'static str {
     match feedback {
         FeedbackKind::ThumbsDown => "thumbsDown",
+        FeedbackKind::UndoThumbsDown => "undoThumbsDown",
+        FeedbackKind::UpdateReason => "updateReason",
+    }
+}
+
+fn feedback_state_active(feedback: FeedbackKind) -> bool {
+    match feedback {
+        FeedbackKind::ThumbsDown | FeedbackKind::UpdateReason => true,
+        FeedbackKind::UndoThumbsDown => false,
     }
 }
 
@@ -544,6 +651,80 @@ mod tests {
         assert_eq!(feedback_kind, "thumbsDown");
         assert_eq!(reason, "");
         assert_eq!(client_id, "client-1");
+        assert_eq!(
+            store
+                .feedback_state(&item)
+                .expect("state should load")
+                .expect("state should exist"),
+            super::super::XFeedbackState {
+                active: true,
+                reason: "".into(),
+            }
+        );
+
+        let _ = std::fs::remove_dir_all(db_path.parent().unwrap().parent().unwrap());
+    }
+
+    #[test]
+    fn updates_feedback_state_reason_for_x_post() {
+        let db_path = temp_db_path("updates-feedback-reason");
+        let mut store = Store::open(&db_path).expect("store should open");
+        let item = item("client-1", Some("123"), "hello");
+
+        store
+            .record_feedback(&item, FeedbackKind::ThumbsDown, "")
+            .expect("feedback should store");
+        store
+            .record_feedback(&item, FeedbackKind::UpdateReason, "low information")
+            .expect("reason should store");
+
+        let state = store
+            .feedback_state(&item)
+            .expect("state should load")
+            .expect("state should exist");
+
+        assert!(state.active);
+        assert_eq!(state.reason, "low information");
+
+        let latest_event: String = store
+            .connection
+            .query_row(
+                "
+                SELECT feedback_kind
+                FROM tweet_feedback
+                WHERE post_id = '123'
+                ORDER BY id DESC
+                LIMIT 1
+                ",
+                [],
+                |row| row.get(0),
+            )
+            .expect("feedback event should exist");
+        assert_eq!(latest_event, "updateReason");
+
+        let _ = std::fs::remove_dir_all(db_path.parent().unwrap().parent().unwrap());
+    }
+
+    #[test]
+    fn undo_feedback_deactivates_feedback_state_for_x_post() {
+        let db_path = temp_db_path("undo-feedback-state");
+        let mut store = Store::open(&db_path).expect("store should open");
+        let item = item("client-1", Some("123"), "hello");
+
+        store
+            .record_feedback(&item, FeedbackKind::ThumbsDown, "low information")
+            .expect("feedback should store");
+        store
+            .record_feedback(&item, FeedbackKind::UndoThumbsDown, "")
+            .expect("undo should store");
+
+        let state = store
+            .feedback_state(&item)
+            .expect("state should load")
+            .expect("state should exist");
+
+        assert!(!state.active);
+        assert_eq!(state.reason, "");
 
         let _ = std::fs::remove_dir_all(db_path.parent().unwrap().parent().unwrap());
     }

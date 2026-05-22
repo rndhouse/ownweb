@@ -30,6 +30,10 @@ OwnWeb data directory. X posts are stored at:
 ~/.local/share/ownweb/x.com/db.sqlite
 ```
 
+X feedback is stored in the same database as both an append-only event log and
+current feedback state. A stored active thumbs-down makes later scans hide that
+post by X status ID.
+
 Override the root data directory with `OWNWEB_DATA_DIR`. The daemon uses
 bundled SQLite through Rust dependencies, so no separate SQLite service or
 system install is required.
@@ -45,11 +49,9 @@ before the daemon opens storage.
 
 Codex app-server summaries are enabled by default. The daemon starts a local
 Codex app-server process when needed, keeps one app-server thread alive across
-requests, asks for short X/Twitter post summaries, and attaches them as
-`label` decisions next to posts. During development, every captured X post with
-text or a URL is sent to Codex so the browser view visibly changes. If Codex is
-unavailable or too slow, the daemon returns a visible summary-unavailable label
-for posts that would have been summarized.
+requests, and asks for short X/Twitter post summaries. During development,
+every captured X post with text or a URL is sent to Codex so the daemon can
+exercise the analysis loop.
 
 Summaries are cached in memory by X status ID plus a normalized text hash. This
 lets the timeline view and single-post view reuse the same AI summary when they
@@ -90,13 +92,16 @@ OWNWEB_X_REVIEW_ALL=0 cargo run
 - `GET /health`
 - `GET /v1/events`
 - `POST /v1/dom/analyze`
+- `POST /v1/dom/feedback`
 
 `/v1/events` is the primary extension path. The extension opens a WebSocket,
 sends DOM analysis events, receives immediate `pending` commands that gate
 identified posts, then receives `final` commands after local analysis finishes.
 
 `/v1/dom/analyze` is the REST smoke-test path. It accepts the same DOM snapshot
-shape and returns final DOM commands in one response.
+shape and returns final DOM commands in one response. `/v1/dom/feedback`
+records `thumbsDown`, `undoThumbsDown`, and `updateReason` signals for one DOM
+region.
 
 Request shape:
 
@@ -177,7 +182,8 @@ WebSocket command event shape:
 }
 ```
 
-Supported command actions are `keep`, `hide`, `dim`, `insertLabel`, and
-`replaceText`. Site-specific DOM interpretation lives under `src/sites/`, and
-site-specific SQLite storage lives under `src/storage/`; the extension stays
-generic and only captures DOM regions and executes commands.
+Supported command actions are `keep`, `hide`, `dim`, `insertLabel`,
+`insertFeedbackControl`, and `replaceText`. Site-specific DOM interpretation
+lives under `src/sites/`, and site-specific SQLite storage lives under
+`src/storage/`; the extension stays generic and only captures DOM regions and
+executes commands.

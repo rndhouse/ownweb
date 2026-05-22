@@ -65,6 +65,7 @@ pub async fn analyze_dom(
     record_content_batch(content_store, &content_batch);
 
     let decisions = decide_items(&content_batch.items, ai_analyzer).await;
+    let decisions = apply_stored_feedback(content_store, &content_batch.items, decisions);
     commands_from_decisions(extracted_items, decisions)
 }
 
@@ -81,6 +82,7 @@ pub fn cached_dom_commands(
 
     let content_batch = content_batch_from_extracted(&extracted_items);
     let decisions = cached_decide_items(&content_batch.items, ai_analyzer)?;
+    let decisions = apply_stored_feedback(content_store, &content_batch.items, decisions);
     record_content_batch(content_store, &content_batch);
 
     Some(commands_from_decisions(extracted_items, decisions))
@@ -90,10 +92,15 @@ pub fn cached_dom_commands(
 pub fn pending_dom_commands(
     batch: &DomAnalysisBatch,
     _ai_analyzer: &AiAnalyzer,
+    content_store: &ContentStore,
 ) -> Vec<DomCommand> {
     extract_items(batch)
         .into_iter()
-        .map(|extracted| DomCommand::feedback_control(extracted.target))
+        .map(|extracted| {
+            stored_dislike_decision(content_store, &extracted.item)
+                .map(|decision| DomCommand::from_decision(decision, extracted.target.clone()))
+                .unwrap_or_else(|| DomCommand::feedback_control(extracted.target))
+        })
         .collect()
 }
 
@@ -113,7 +120,7 @@ pub fn apply_feedback(
     record_content_batch(content_store, &content_batch);
     record_feedback(content_store, &content_batch.items, feedback, reason);
 
-    feedback_commands(extracted_items, feedback)
+    Vec::new()
 }
 
 fn record_feedback(
@@ -131,26 +138,6 @@ fn record_feedback(
                 "failed to store X feedback"
             );
         }
-    }
-}
-
-fn feedback_commands(
-    extracted_items: Vec<ExtractedItem>,
-    feedback: FeedbackKind,
-) -> Vec<DomCommand> {
-    match feedback {
-        FeedbackKind::ThumbsDown => extracted_items
-            .into_iter()
-            .map(|extracted| {
-                let decision = ContentDecision::hide(
-                    extracted.item.client_id,
-                    "OwnWeb: hidden",
-                    "Hidden after thumbs-down feedback",
-                    1.0,
-                );
-                DomCommand::from_decision(decision, extracted.target)
-            })
-            .collect(),
     }
 }
 
@@ -196,6 +183,52 @@ async fn decide_items(items: &[ContentItem], ai_analyzer: &AiAnalyzer) -> Vec<Co
             }
         })
         .collect()
+}
+
+fn apply_stored_feedback(
+    content_store: &ContentStore,
+    items: &[ContentItem],
+    decisions: Vec<ContentDecision>,
+) -> Vec<ContentDecision> {
+    let items_by_client_id: HashMap<&str, &ContentItem> = items
+        .iter()
+        .map(|item| (item.client_id.as_str(), item))
+        .collect();
+
+    decisions
+        .into_iter()
+        .map(|decision| {
+            let Some(item) = items_by_client_id.get(decision.client_id.as_str()) else {
+                return decision;
+            };
+
+            stored_dislike_decision(content_store, item).unwrap_or(decision)
+        })
+        .collect()
+}
+
+fn stored_dislike_decision(
+    content_store: &ContentStore,
+    item: &ContentItem,
+) -> Option<ContentDecision> {
+    match content_store.x_feedback_state(item) {
+        Ok(Some(state)) if state.active => Some(ContentDecision::hide(
+            item.client_id.clone(),
+            "OwnWeb: hidden",
+            "Previously disliked",
+            1.0,
+        )),
+        Ok(_) => None,
+        Err(error) => {
+            warn!(
+                %error,
+                client_id = item.client_id.as_str(),
+                content_id = item.content_id.as_deref(),
+                "failed to read X feedback state"
+            );
+            None
+        }
+    }
 }
 
 fn cached_decide_items(
@@ -489,7 +522,9 @@ mod tests {
     use crate::{
         ai::AiAnalyzer,
         core::{DecisionAction, DomAttribute, DomLink, PageSnapshot},
+        storage::ContentStore,
     };
+    use std::path::PathBuf;
 
     fn batch(elements: Vec<DomElementSnapshot>) -> DomAnalysisBatch {
         batch_with_url("https://x.com/home", elements)
@@ -576,6 +611,19 @@ mod tests {
             kind: Some("post".into()),
             metadata: serde_json::Value::Null,
         }
+    }
+
+    fn temp_data_dir(name: &str) -> PathBuf {
+        let path =
+            std::env::temp_dir().join(format!("ownweb-x-site-test-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&path);
+        path
+    }
+
+    fn content_store(name: &str) -> (ContentStore, PathBuf) {
+        let data_dir = temp_data_dir(name);
+        let store = ContentStore::with_data_dir(&data_dir).expect("content store should open");
+        (store, data_dir)
     }
 
     #[test]
@@ -727,6 +775,7 @@ mod tests {
 
     #[test]
     fn pending_commands_install_feedback_controls_for_all_posts() {
+        let (content_store, data_dir) = content_store("pending-controls");
         let cached_item = content_item("cached", "12345", "Timeline text");
         let ai_analyzer =
             AiAnalyzer::for_tests_with_x_summaries(&[(&cached_item, "cached summary", 0.82)]);
@@ -743,7 +792,7 @@ mod tests {
             ),
         ]);
 
-        let commands = pending_dom_commands(&batch, &ai_analyzer);
+        let commands = pending_dom_commands(&batch, &ai_analyzer, &content_store);
 
         assert_eq!(commands.len(), 2);
         assert!(commands.iter().all(|command| matches!(
@@ -752,25 +801,37 @@ mod tests {
         )));
         assert_eq!(commands[0].target.client_id, "client-1");
         assert_eq!(commands[1].target.client_id, "client-2");
+
+        let _ = std::fs::remove_dir_all(data_dir);
     }
 
     #[test]
-    fn thumbs_down_feedback_hides_the_target_post() {
+    fn thumbs_down_feedback_records_state_without_hiding_immediately() {
+        let (content_store, data_dir) = content_store("thumbs-down-state");
         let batch = batch(vec![element(
             "client-1",
             "Post text",
             Some("https://x.com/user/status/12345"),
         )]);
-        let extracted = extract_items(&batch);
+        let ai_analyzer = AiAnalyzer::for_tests_with_x_summaries(&[]);
 
-        let commands = feedback_commands(extracted, FeedbackKind::ThumbsDown);
+        let commands = apply_feedback(
+            &batch,
+            FeedbackKind::ThumbsDown,
+            "low quality",
+            &content_store,
+        );
+        let pending_commands = pending_dom_commands(&batch, &ai_analyzer, &content_store);
 
-        assert_eq!(commands.len(), 1);
-        assert_eq!(commands[0].target.client_id, "client-1");
+        assert!(commands.is_empty());
+        assert_eq!(pending_commands.len(), 1);
+        assert_eq!(pending_commands[0].target.client_id, "client-1");
         assert!(matches!(
-            commands[0].action,
+            pending_commands[0].action,
             crate::core::DomCommandAction::Hide
         ));
-        assert_eq!(commands[0].label.as_deref(), Some("OwnWeb: hidden"));
+        assert_eq!(pending_commands[0].label.as_deref(), Some("OwnWeb: hidden"));
+
+        let _ = std::fs::remove_dir_all(data_dir);
     }
 }

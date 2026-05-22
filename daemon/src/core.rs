@@ -115,6 +115,10 @@ pub struct DomElementSnapshot {
 pub enum FeedbackKind {
     /// User requested less content like this region.
     ThumbsDown,
+    /// User removed a previous thumbs-down signal for this region.
+    UndoThumbsDown,
+    /// User updated the reason attached to a thumbs-down signal.
+    UpdateReason,
 }
 
 /// One DOM attribute captured from a region root.

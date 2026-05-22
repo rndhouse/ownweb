@@ -341,7 +341,8 @@ function normalizeCommand(command) {
 
 function normalizeFeedback(value) {
   const feedback = stringOrEmpty(value);
-  return feedback === "thumbsDown" ? feedback : "thumbsDown";
+  const allowedFeedback = new Set(["thumbsDown", "undoThumbsDown", "updateReason"]);
+  return allowedFeedback.has(feedback) ? feedback : "thumbsDown";
 }
 
 async function getSettings() {

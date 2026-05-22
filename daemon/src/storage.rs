@@ -19,13 +19,22 @@ pub struct ContentStore {
     x_com: Arc<Mutex<x_com::Store>>,
 }
 
+/// Current feedback state for one stored X/Twitter content item.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct XFeedbackState {
+    /// Whether this item is currently disliked by the user.
+    pub active: bool,
+    /// Latest reason attached to the dislike signal.
+    pub reason: String,
+}
+
 impl ContentStore {
     /// Opens the per-site storage databases under the configured data directory.
     pub fn from_env() -> Result<Self> {
         Self::with_data_dir(data_dir_from_env()?)
     }
 
-    fn with_data_dir(data_dir: impl AsRef<Path>) -> Result<Self> {
+    pub(crate) fn with_data_dir(data_dir: impl AsRef<Path>) -> Result<Self> {
         let x_com_path = site_db_path(data_dir.as_ref(), x_com::SITE_DIR);
         if env_flag_default(RESET_X_DB_ENV, false) {
             reset_sqlite_db_files(&x_com_path)?;
@@ -66,6 +75,15 @@ impl ContentStore {
             .lock()
             .expect("X storage mutex should not be poisoned");
         db.record_feedback(item, feedback, reason)
+    }
+
+    /// Returns the current feedback state for one X/Twitter content item.
+    pub fn x_feedback_state(&self, item: &ContentItem) -> Result<Option<XFeedbackState>> {
+        let db = self
+            .x_com
+            .lock()
+            .expect("X storage mutex should not be poisoned");
+        db.feedback_state(item)
     }
 }
 

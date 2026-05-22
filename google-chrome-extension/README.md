@@ -38,7 +38,9 @@ POST http://127.0.0.1:17891/v1/dom/feedback
 Content-Type: application/json
 ```
 
-For X posts, the daemon stores feedback events in the X site database.
+For X posts, the daemon stores feedback events and current feedback state in the
+X site database. The first thumbs-down records the dislike and opens a local
+reason panel; later scans hide posts whose stored feedback state is active.
 
 WebSocket request shape:
 
@@ -134,3 +136,6 @@ Feedback request shape:
   }
 }
 ```
+
+Supported feedback values are `thumbsDown`, `undoThumbsDown`, and
+`updateReason`.

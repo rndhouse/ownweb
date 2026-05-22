@@ -174,7 +174,7 @@ async fn handle_client_event(
             let _ = event_sender.send(ServerEvent::commands(
                 request_id.clone(),
                 AnalysisPhase::Pending,
-                sites::pending_dom_commands(&batch, &state.ai_analyzer),
+                sites::pending_dom_commands(&batch, &state.ai_analyzer, &state.content_store),
             ));
 
             let final_sender = event_sender.clone();
