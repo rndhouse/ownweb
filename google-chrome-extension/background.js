@@ -4,6 +4,7 @@ const EVENTS_PATH = "/v1/events";
 const REQUEST_TIMEOUT_MS = 20000;
 const MAX_ELEMENTS_PER_REQUEST = 16;
 const REQUEST_GC_MS = 60000;
+const PENDING_RESPONSE_TIMEOUT_MS = 1000;
 
 let socket = null;
 let socketOrigin = null;
@@ -43,8 +44,7 @@ async function analyzeDom(message, sender) {
 
   if (tabId !== null) {
     try {
-      await sendAnalyzeDomOverSocket(settings.daemonOrigin, tabId, { page, elements });
-      return [];
+      return await sendAnalyzeDomOverSocket(settings.daemonOrigin, tabId, { page, elements });
     } catch (_error) {
       // Fall through to REST so a disconnected WebSocket does not block development.
     }
@@ -57,18 +57,35 @@ async function sendAnalyzeDomOverSocket(origin, tabId, body) {
   const ws = await ensureSocket(origin);
   const requestId = nextRequestIdString();
   const timeoutId = setTimeout(() => {
-    pendingRequests.delete(requestId);
+    finishPendingRequest(requestId);
   }, REQUEST_GC_MS);
 
-  pendingRequests.set(requestId, { tabId, timeoutId });
-  ws.send(
-    JSON.stringify({
-      type: "analyzeDom",
-      requestId,
-      page: body.page,
-      elements: body.elements
-    })
-  );
+  return new Promise((resolve) => {
+    const pendingTimeoutId = setTimeout(() => {
+      const pendingRequest = pendingRequests.get(requestId);
+      if (pendingRequest && pendingRequest.resolvePending) {
+        pendingRequest.resolvePending = null;
+        pendingRequest.pendingTimeoutId = null;
+        resolve([]);
+      }
+    }, PENDING_RESPONSE_TIMEOUT_MS);
+
+    pendingRequests.set(requestId, {
+      tabId,
+      timeoutId,
+      pendingTimeoutId,
+      resolvePending: resolve
+    });
+
+    ws.send(
+      JSON.stringify({
+        type: "analyzeDom",
+        requestId,
+        page: body.page,
+        elements: body.elements
+      })
+    );
+  });
 }
 
 async function analyzeDomOverRest(origin, body) {
@@ -155,15 +172,30 @@ function handleSocketMessage(data) {
     return;
   }
 
-  if (event.phase === "final") {
-    clearTimeout(pendingRequest.timeoutId);
-    pendingRequests.delete(requestId);
-  }
-
   const commands = Array.isArray(event.commands)
     ? event.commands.map(normalizeCommand)
     : [];
+  let shouldPush = true;
+
+  if (event.phase === "pending" && pendingRequest.resolvePending) {
+    if (pendingRequest.pendingTimeoutId) {
+      clearTimeout(pendingRequest.pendingTimeoutId);
+    }
+    pendingRequest.pendingTimeoutId = null;
+    const resolvePending = pendingRequest.resolvePending;
+    pendingRequest.resolvePending = null;
+    shouldPush = false;
+    resolvePending(commands);
+  }
+
   if (commands.length === 0) {
+    if (event.phase === "final") {
+      finishPendingRequest(requestId);
+    }
+    return;
+  }
+
+  if (!shouldPush) {
     return;
   }
 
@@ -177,6 +209,26 @@ function handleSocketMessage(data) {
       chrome.runtime.lastError;
     }
   );
+
+  if (event.phase === "final") {
+    finishPendingRequest(requestId);
+  }
+}
+
+function finishPendingRequest(requestId) {
+  const pendingRequest = pendingRequests.get(requestId);
+  if (!pendingRequest) {
+    return;
+  }
+
+  clearTimeout(pendingRequest.timeoutId);
+  if (pendingRequest.pendingTimeoutId) {
+    clearTimeout(pendingRequest.pendingTimeoutId);
+  }
+  if (pendingRequest.resolvePending) {
+    pendingRequest.resolvePending([]);
+  }
+  pendingRequests.delete(requestId);
 }
 
 function normalizePage(page) {

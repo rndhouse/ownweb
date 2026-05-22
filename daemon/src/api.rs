@@ -136,14 +136,11 @@ async fn handle_client_event(
                 log_dom_batch(&batch);
             }
 
-            let pending_commands = sites::pending_dom_commands(&batch);
-            if !pending_commands.is_empty() {
-                let _ = event_sender.send(ServerEvent::commands(
-                    request_id.clone(),
-                    AnalysisPhase::Pending,
-                    pending_commands,
-                ));
-            }
+            let _ = event_sender.send(ServerEvent::commands(
+                request_id.clone(),
+                AnalysisPhase::Pending,
+                sites::pending_dom_commands(&batch),
+            ));
 
             let final_sender = event_sender.clone();
             tokio::spawn(async move {
