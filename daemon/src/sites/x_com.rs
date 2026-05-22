@@ -126,15 +126,31 @@ async fn decide_items(items: &[ContentItem], ai_analyzer: &AiAnalyzer) -> Vec<Co
 }
 
 fn extract_items(batch: &DomAnalysisBatch) -> Vec<ExtractedItem> {
-    batch
-        .elements
-        .iter()
-        .filter_map(|element| extract_item(batch, element))
-        .collect()
+    let mut page_status_href = status_href_from_page(&batch.page.url);
+    let mut extracted_items = Vec::new();
+
+    for element in &batch.elements {
+        let Some(extracted) = extract_item(batch, element, page_status_href.as_deref()) else {
+            continue;
+        };
+
+        page_status_href = None;
+        extracted_items.push(extracted);
+    }
+
+    extracted_items
 }
 
-fn extract_item(batch: &DomAnalysisBatch, element: &DomElementSnapshot) -> Option<ExtractedItem> {
-    let status_href = find_status_href(element).or_else(|| status_href_from_page(&batch.page.url));
+fn extract_item(
+    batch: &DomAnalysisBatch,
+    element: &DomElementSnapshot,
+    page_status_href: Option<&str>,
+) -> Option<ExtractedItem> {
+    if !has_post_region_evidence(element) {
+        return None;
+    }
+
+    let status_href = find_status_href(element).or_else(|| page_status_href.map(ToOwned::to_owned));
     let post_id = status_href
         .as_deref()
         .and_then(x_status_id)
@@ -174,6 +190,24 @@ fn extract_item(batch: &DomAnalysisBatch, element: &DomElementSnapshot) -> Optio
     };
 
     Some(ExtractedItem { item, target })
+}
+
+fn has_post_region_evidence(element: &DomElementSnapshot) -> bool {
+    element
+        .tag_name
+        .as_deref()
+        .is_some_and(|tag_name| tag_name.eq_ignore_ascii_case("article"))
+        || element
+            .role
+            .as_deref()
+            .is_some_and(|role| role.eq_ignore_ascii_case("article"))
+        || has_root_attribute(element, "data-testid", "tweet")
+}
+
+fn has_root_attribute(element: &DomElementSnapshot, name: &str, value: &str) -> bool {
+    element.attributes.iter().any(|attribute| {
+        attribute.name.eq_ignore_ascii_case(name) && attribute.value.eq_ignore_ascii_case(value)
+    })
 }
 
 fn debug_identified_post(item: &ContentItem) {
@@ -330,12 +364,16 @@ struct ExtractedItem {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::{DomLink, PageSnapshot};
+    use crate::core::{DomAttribute, DomLink, PageSnapshot};
 
     fn batch(elements: Vec<DomElementSnapshot>) -> DomAnalysisBatch {
+        batch_with_url("https://x.com/home", elements)
+    }
+
+    fn batch_with_url(url: &str, elements: Vec<DomElementSnapshot>) -> DomAnalysisBatch {
         DomAnalysisBatch {
             page: PageSnapshot {
-                url: "https://x.com/home".into(),
+                url: url.into(),
                 title: Some("X".into()),
                 captured_at: Some("2026-05-22T09:00:00.000Z".into()),
             },
@@ -344,11 +382,21 @@ mod tests {
     }
 
     fn element(client_id: &str, text: &str, href: Option<&str>) -> DomElementSnapshot {
+        element_with_root(client_id, "article", None, text, href)
+    }
+
+    fn element_with_root(
+        client_id: &str,
+        tag_name: &str,
+        role: Option<&str>,
+        text: &str,
+        href: Option<&str>,
+    ) -> DomElementSnapshot {
         DomElementSnapshot {
             client_id: client_id.into(),
-            selector: Some("article:nth-of-type(1)".into()),
-            tag_name: Some("article".into()),
-            role: None,
+            selector: Some(format!("{tag_name}:nth-of-type(1)")),
+            tag_name: Some(tag_name.into()),
+            role: role.map(ToOwned::to_owned),
             text: text.into(),
             html: None,
             attributes: Vec::new(),
@@ -364,6 +412,19 @@ mod tests {
             snapshot_hash: Some("hash1".into()),
             captured_at: None,
         }
+    }
+
+    fn data_testid_tweet_element(
+        client_id: &str,
+        text: &str,
+        href: Option<&str>,
+    ) -> DomElementSnapshot {
+        let mut element = element_with_root(client_id, "div", None, text, href);
+        element.attributes = vec![DomAttribute {
+            name: "data-testid".into(),
+            value: "tweet".into(),
+        }];
+        element
     }
 
     fn item(text: &str, url: Option<&str>) -> ContentItem {
@@ -403,6 +464,80 @@ mod tests {
         let batch = batch(vec![element("client-1", "navigation", None)]);
 
         assert!(extract_items(&batch).is_empty());
+    }
+
+    #[test]
+    fn ignores_status_links_inside_non_post_regions() {
+        let batch = batch(vec![element_with_root(
+            "client-1",
+            "section",
+            None,
+            "What's happening Trending item",
+            Some("https://x.com/alice/status/12345?s=20"),
+        )]);
+
+        assert!(extract_items(&batch).is_empty());
+    }
+
+    #[test]
+    fn does_not_use_page_status_url_for_non_post_regions() {
+        let batch = batch_with_url(
+            "https://x.com/alice/status/12345",
+            vec![element_with_root(
+                "client-1",
+                "section",
+                None,
+                "What's happening Trending item",
+                None,
+            )],
+        );
+
+        assert!(extract_items(&batch).is_empty());
+    }
+
+    #[test]
+    fn uses_page_status_url_for_post_like_regions() {
+        let batch = batch_with_url(
+            "https://x.com/alice/status/12345",
+            vec![element("client-1", "Main post text", None)],
+        );
+
+        let extracted = extract_items(&batch);
+
+        assert_eq!(extracted.len(), 1);
+        assert_eq!(extracted[0].item.content_id.as_deref(), Some("12345"));
+        assert_eq!(
+            extracted[0].item.url.as_deref(),
+            Some("https://x.com/alice/status/12345")
+        );
+    }
+
+    #[test]
+    fn uses_page_status_url_for_only_one_post_like_region() {
+        let batch = batch_with_url(
+            "https://x.com/alice/status/12345",
+            vec![
+                element("client-1", "Main post text", None),
+                element("client-2", "Reply text without its own status link", None),
+            ],
+        );
+
+        let extracted = extract_items(&batch);
+
+        assert_eq!(extracted.len(), 1);
+        assert_eq!(extracted[0].item.client_id, "client-1");
+        assert_eq!(extracted[0].item.content_id.as_deref(), Some("12345"));
+    }
+
+    #[test]
+    fn data_testid_tweet_root_is_post_region_evidence() {
+        let batch = batch(vec![data_testid_tweet_element(
+            "client-1",
+            "Post text",
+            Some("https://x.com/alice/status/12345?s=20"),
+        )]);
+
+        assert_eq!(extract_items(&batch).len(), 1);
     }
 
     #[test]
