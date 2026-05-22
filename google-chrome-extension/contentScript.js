@@ -5,6 +5,7 @@ const MAX_TEXT_CHARS = 20000;
 const MAX_HTML_CHARS = 60000;
 const MAX_LINKS = 80;
 const MAX_ATTRIBUTES = 40;
+const FEEDBACK_REASON_SAVE_DEBOUNCE_MS = 550;
 const FEEDBACK_REASON_PRESETS = [
   "Low information",
   "Rage bait",
@@ -14,12 +15,14 @@ const FEEDBACK_REASON_PRESETS = [
 ];
 
 let nextGeneratedId = 1;
+let nextFeedbackSaveId = 1;
 let scanTimer = null;
 let requestInFlight = false;
 
 const elementIds = new WeakMap();
 const elementsByClientId = new Map();
 const snapshotsByClientId = new Map();
+const feedbackReasonTimers = new WeakMap();
 const queuedSnapshots = [];
 
 scheduleScan();
@@ -366,6 +369,14 @@ async function toggleFeedback(element, button) {
   const wasActive = button.classList.contains("ownweb-feedback-button--active");
   const feedback = wasActive ? "undoThumbsDown" : "thumbsDown";
   const reason = wasActive ? currentFeedbackReason(element, button) : "";
+  const panel = wasActive
+    ? feedbackReasonPanel(element, button.dataset.ownwebClientId || "")
+    : null;
+
+  if (panel) {
+    cancelScheduledReasonUpdate(panel);
+    panel.dataset.ownwebClosing = "true";
+  }
 
   button.disabled = true;
   button.dataset.ownwebFeedbackState = "pending";
@@ -387,6 +398,10 @@ async function toggleFeedback(element, button) {
       showFeedbackReasonPanel(element, button);
     }
   } catch (error) {
+    if (panel) {
+      delete panel.dataset.ownwebClosing;
+      setFeedbackSaveStatus(panel, "Undo failed", "error");
+    }
     button.dataset.ownwebFeedbackState = wasActive ? "active" : "unavailable";
     button.title = `OwnWeb feedback unavailable: ${
       error instanceof Error ? error.message : String(error)
@@ -453,17 +468,25 @@ function createFeedbackReasonPanel(element, button) {
   const clientId = button.dataset.ownwebClientId || "";
   const panel = document.createElement("div");
   const label = document.createElement("div");
+  const status = document.createElement("div");
   const chips = document.createElement("div");
   const input = document.createElement("textarea");
 
   panel.className = "ownweb-feedback-panel";
   panel.dataset.ownwebUi = "true";
   panel.dataset.ownwebClientId = clientId;
-  panel.dataset.ownwebLastReason = "";
+  panel.dataset.ownwebSavedReason = "";
+  panel.dataset.ownwebSaveState = "saved";
 
   label.className = "ownweb-feedback-panel-label";
   label.dataset.ownwebUi = "true";
   label.textContent = "Reason";
+
+  status.className = "ownweb-feedback-save-status";
+  status.dataset.ownwebUi = "true";
+  status.setAttribute("role", "status");
+  status.setAttribute("aria-live", "polite");
+  status.textContent = "Saved";
 
   chips.className = "ownweb-feedback-reason-chips";
   chips.dataset.ownwebUi = "true";
@@ -472,13 +495,17 @@ function createFeedbackReasonPanel(element, button) {
     chip.type = "button";
     chip.className = "ownweb-feedback-reason-chip";
     chip.dataset.ownwebUi = "true";
+    chip.dataset.ownwebReason = reason;
     chip.textContent = reason;
+    chip.setAttribute("aria-pressed", "false");
     chip.addEventListener("click", (event) => {
       event.preventDefault();
       event.stopPropagation();
       event.stopImmediatePropagation();
       input.value = reason;
-      queueReasonUpdate(element, button, panel);
+      input.focus();
+      updateSelectedReasonChip(panel, reason);
+      scheduleReasonUpdate(element, button, panel, { immediate: true });
     });
     chips.append(chip);
   }
@@ -493,46 +520,87 @@ function createFeedbackReasonPanel(element, button) {
   input.addEventListener("keydown", (event) => {
     event.stopPropagation();
   });
+  input.addEventListener("input", () => {
+    updateSelectedReasonChip(panel, currentPanelReason(panel));
+    scheduleReasonUpdate(element, button, panel);
+  });
   input.addEventListener("blur", () => {
     if (button.dataset.ownwebSkipNextReasonBlur === "true") {
       return;
     }
 
-    queueReasonUpdate(element, button, panel);
+    scheduleReasonUpdate(element, button, panel, { immediate: true });
   });
   input.addEventListener("change", () => {
-    queueReasonUpdate(element, button, panel);
+    scheduleReasonUpdate(element, button, panel, { immediate: true });
   });
 
-  panel.addEventListener("click", (event) => {
-    event.stopPropagation();
-  }, true);
-  panel.addEventListener("keydown", (event) => {
-    event.stopPropagation();
-  }, true);
+  panel.addEventListener("pointerdown", stopPanelEvent);
+  panel.addEventListener("click", stopPanelEvent);
+  panel.addEventListener("keydown", stopPanelEvent);
 
-  panel.append(label, chips, input);
+  panel.append(label, status, chips, input);
   return panel;
 }
 
-function queueReasonUpdate(element, button, panel) {
-  if (!button.classList.contains("ownweb-feedback-button--active")) {
-    return;
-  }
-
-  const input = panel.querySelector(".ownweb-feedback-reason-input");
-  const reason = input instanceof HTMLTextAreaElement ? input.value.trim() : "";
-  if (panel.dataset.ownwebLastReason === reason) {
-    return;
-  }
-
-  panel.dataset.ownwebLastReason = reason;
-  void sendReasonUpdate(element, button, reason);
+function stopPanelEvent(event) {
+  event.stopPropagation();
 }
 
-async function sendReasonUpdate(element, button, reason) {
+function scheduleReasonUpdate(element, button, panel, options = {}) {
+  if (
+    !button.classList.contains("ownweb-feedback-button--active") ||
+    panel.dataset.ownwebClosing === "true"
+  ) {
+    return;
+  }
+
+  const reason = currentPanelReason(panel);
+  updateSelectedReasonChip(panel, reason);
+  cancelScheduledReasonUpdate(panel);
+
+  if ((panel.dataset.ownwebSavedReason || "") === reason) {
+    setFeedbackSaveStatus(panel, "Saved", "saved");
+    return;
+  }
+
+  setFeedbackSaveStatus(panel, "Saving...", "saving");
+
+  const save = () => {
+    feedbackReasonTimers.delete(panel);
+    void sendReasonUpdate(element, button, panel, reason);
+  };
+
+  if (options.immediate) {
+    save();
+    return;
+  }
+
+  feedbackReasonTimers.set(
+    panel,
+    setTimeout(save, FEEDBACK_REASON_SAVE_DEBOUNCE_MS)
+  );
+}
+
+function cancelScheduledReasonUpdate(panel) {
+  const timer = feedbackReasonTimers.get(panel);
+  if (timer) {
+    clearTimeout(timer);
+    feedbackReasonTimers.delete(panel);
+  }
+}
+
+async function sendReasonUpdate(element, button, panel, reason) {
+  if (panel.dataset.ownwebClosing === "true") {
+    return;
+  }
+
+  const requestId = String(nextFeedbackSaveId);
+  nextFeedbackSaveId += 1;
   const previousTitle = button.title;
+  panel.dataset.ownwebSaveRequestId = requestId;
   button.dataset.ownwebFeedbackState = "pending";
+  setFeedbackSaveStatus(panel, "Saving...", "saving");
 
   try {
     const response = await sendFeedbackEvent(element, "updateReason", reason);
@@ -541,10 +609,30 @@ async function sendReasonUpdate(element, button, reason) {
     }
 
     applyCommands(response.commands || []);
+    if (!panel.isConnected || panel.dataset.ownwebClosing === "true") {
+      return;
+    }
+    if (
+      panel.dataset.ownwebSaveRequestId !== requestId ||
+      currentPanelReason(panel) !== reason
+    ) {
+      return;
+    }
+
+    panel.dataset.ownwebSavedReason = reason;
+    setFeedbackSaveStatus(panel, `Saved ${shortTime(new Date())}`, "saved");
     if (button.classList.contains("ownweb-feedback-button--active")) {
       button.dataset.ownwebFeedbackState = "active";
     }
   } catch (error) {
+    if (
+      panel.isConnected &&
+      panel.dataset.ownwebSaveRequestId === requestId &&
+      panel.dataset.ownwebClosing !== "true"
+    ) {
+      setFeedbackSaveStatus(panel, "Save failed", "error");
+    }
+
     button.dataset.ownwebFeedbackState = "active";
     button.title = `OwnWeb feedback unavailable: ${
       error instanceof Error ? error.message : String(error)
@@ -555,6 +643,34 @@ async function sendReasonUpdate(element, button, reason) {
       }
     }, 2500);
   }
+}
+
+function currentPanelReason(panel) {
+  const input = panel.querySelector(".ownweb-feedback-reason-input");
+  return input instanceof HTMLTextAreaElement ? input.value.trim() : "";
+}
+
+function updateSelectedReasonChip(panel, reason) {
+  for (const chip of panel.querySelectorAll(".ownweb-feedback-reason-chip")) {
+    const selected = chip.dataset.ownwebReason === reason;
+    chip.classList.toggle("ownweb-feedback-reason-chip--selected", selected);
+    chip.setAttribute("aria-pressed", selected ? "true" : "false");
+  }
+}
+
+function setFeedbackSaveStatus(panel, text, state) {
+  panel.dataset.ownwebSaveState = state;
+  const status = panel.querySelector(".ownweb-feedback-save-status");
+  if (status) {
+    status.textContent = text;
+  }
+}
+
+function shortTime(date) {
+  return date.toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit"
+  });
 }
 
 function currentFeedbackReason(element, button) {
@@ -577,6 +693,7 @@ function feedbackReasonPanel(element, clientId) {
 function removeFeedbackReasonPanel(element, clientId) {
   const panel = feedbackReasonPanel(element, clientId);
   if (panel) {
+    cancelScheduledReasonUpdate(panel);
     panel.remove();
   }
 }
