@@ -7,10 +7,24 @@ use crate::{
 pub mod x_com;
 
 /// Returns immediate browser commands for content that should be gated.
-pub fn pending_dom_commands(batch: &DomAnalysisBatch) -> Vec<DomCommand> {
+pub fn pending_dom_commands(batch: &DomAnalysisBatch, ai_analyzer: &AiAnalyzer) -> Vec<DomCommand> {
     match page_host(&batch.page.url).as_deref() {
-        Some("x.com") | Some("twitter.com") => x_com::pending_dom_commands(batch),
+        Some("x.com") | Some("twitter.com") => x_com::pending_dom_commands(batch, ai_analyzer),
         _ => Vec::new(),
+    }
+}
+
+/// Returns final DOM commands when they can be produced without async analysis.
+pub fn cached_dom_commands(
+    batch: &DomAnalysisBatch,
+    ai_analyzer: &AiAnalyzer,
+    content_store: &ContentStore,
+) -> Option<Vec<DomCommand>> {
+    match page_host(&batch.page.url).as_deref() {
+        Some("x.com") | Some("twitter.com") => {
+            x_com::cached_dom_commands(batch, ai_analyzer, content_store)
+        }
+        _ => Some(Vec::new()),
     }
 }
 

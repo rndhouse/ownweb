@@ -136,10 +136,21 @@ async fn handle_client_event(
                 log_dom_batch(&batch);
             }
 
+            if let Some(commands) =
+                sites::cached_dom_commands(&batch, &state.ai_analyzer, &state.content_store)
+            {
+                let _ = event_sender.send(ServerEvent::commands(
+                    request_id,
+                    AnalysisPhase::Final,
+                    commands,
+                ));
+                return;
+            }
+
             let _ = event_sender.send(ServerEvent::commands(
                 request_id.clone(),
                 AnalysisPhase::Pending,
-                sites::pending_dom_commands(&batch),
+                sites::pending_dom_commands(&batch, &state.ai_analyzer),
             ));
 
             let final_sender = event_sender.clone();

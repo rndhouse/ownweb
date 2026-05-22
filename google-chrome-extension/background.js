@@ -177,7 +177,7 @@ function handleSocketMessage(data) {
     : [];
   let shouldPush = true;
 
-  if (event.phase === "pending" && pendingRequest.resolvePending) {
+  if ((event.phase === "pending" || event.phase === "final") && pendingRequest.resolvePending) {
     if (pendingRequest.pendingTimeoutId) {
       clearTimeout(pendingRequest.pendingTimeoutId);
     }
@@ -186,6 +186,10 @@ function handleSocketMessage(data) {
     pendingRequest.resolvePending = null;
     shouldPush = false;
     resolvePending(commands);
+
+    if (event.phase === "final") {
+      finishPendingRequest(requestId);
+    }
   }
 
   if (commands.length === 0) {

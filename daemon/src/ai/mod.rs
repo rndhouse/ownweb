@@ -94,6 +94,42 @@ impl AiAnalyzer {
             }
         }
     }
+
+    /// Gets X opinions only when every requested item is already cached.
+    pub fn cached_x_opinions(&self, items: &[ContentItem]) -> Option<Vec<AiOpinion>> {
+        let now = Instant::now();
+        let mut cache = self
+            .x_summary_cache
+            .lock()
+            .expect("X summary cache mutex should not be poisoned");
+        let mut opinions = Vec::with_capacity(items.len());
+
+        for item in items {
+            let hit = cache.get(item, now)?;
+            opinions.push(AiOpinion {
+                client_id: hit.client_id,
+                opinion: hit.summary,
+                confidence: hit.confidence,
+            });
+        }
+
+        Some(opinions)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn for_tests_with_x_summaries(summaries: &[(&ContentItem, &str, f32)]) -> Self {
+        let mut cache = SummaryCache::from_env();
+        let now = Instant::now();
+
+        for (item, summary, confidence) in summaries {
+            cache.insert(item, *summary, *confidence, now);
+        }
+
+        Self {
+            codex_app: None,
+            x_summary_cache: Arc::new(Mutex::new(cache)),
+        }
+    }
 }
 
 fn env_flag_default(name: &str, default: bool) -> bool {

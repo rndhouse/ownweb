@@ -1,5 +1,5 @@
 use crate::{
-    ai::AiAnalyzer,
+    ai::{AiAnalyzer, AiOpinion},
     core::{
         AnalysisBatch, ContentDecision, ContentItem, DomAnalysisBatch, DomCommand,
         DomCommandTarget, DomElementSnapshot,
@@ -61,26 +61,48 @@ pub async fn analyze_dom(
         return Vec::new();
     }
 
-    let content_batch = AnalysisBatch::new(
-        "x.com",
-        extracted_items
-            .iter()
-            .map(|extracted| extracted.item.clone())
-            .collect(),
-    );
-    if let Err(error) = content_store.record_x_batch(&content_batch) {
-        warn!(%error, "failed to store X content");
-    }
+    let content_batch = content_batch_from_extracted(&extracted_items);
+    record_content_batch(content_store, &content_batch);
 
     let decisions = decide_items(&content_batch.items, ai_analyzer).await;
     commands_from_decisions(extracted_items, decisions)
 }
 
+/// Returns final commands when every required X summary is already cached.
+pub fn cached_dom_commands(
+    batch: &DomAnalysisBatch,
+    ai_analyzer: &AiAnalyzer,
+    content_store: &ContentStore,
+) -> Option<Vec<DomCommand>> {
+    let extracted_items = extract_items(batch);
+    if extracted_items.is_empty() {
+        return Some(Vec::new());
+    }
+
+    let content_batch = content_batch_from_extracted(&extracted_items);
+    let decisions = cached_decide_items(&content_batch.items, ai_analyzer)?;
+    record_content_batch(content_store, &content_batch);
+
+    Some(commands_from_decisions(extracted_items, decisions))
+}
+
 /// Returns immediate commands that gate identified X posts during analysis.
-pub fn pending_dom_commands(batch: &DomAnalysisBatch) -> Vec<DomCommand> {
+pub fn pending_dom_commands(batch: &DomAnalysisBatch, ai_analyzer: &AiAnalyzer) -> Vec<DomCommand> {
+    let review_all = env_flag_default(REVIEW_ALL_ENV, true);
+
     extract_items(batch)
         .into_iter()
-        .map(|extracted| DomCommand::checking(extracted.target))
+        .filter_map(|extracted| {
+            if !should_ask_codex(&extracted.item, review_all)
+                || ai_analyzer
+                    .cached_x_opinions(std::slice::from_ref(&extracted.item))
+                    .is_some()
+            {
+                return None;
+            }
+
+            Some(DomCommand::checking(extracted.target))
+        })
         .collect()
 }
 
@@ -103,12 +125,7 @@ async fn decide_items(items: &[ContentItem], ai_analyzer: &AiAnalyzer) -> Vec<Co
                 .iter()
                 .map(|item| {
                     if let Some(opinion) = opinions_by_id.remove(&item.client_id) {
-                        ContentDecision::label(
-                            opinion.client_id,
-                            format!("Summary: {}", opinion.opinion),
-                            "Codex app-server summary",
-                            opinion.confidence,
-                        )
+                        opinion_decision(opinion)
                     } else if review_all && has_prompt_content(item) {
                         summary_unavailable(item)
                     } else if should_ask_codex(item, review_all) {
@@ -131,6 +148,65 @@ async fn decide_items(items: &[ContentItem], ai_analyzer: &AiAnalyzer) -> Vec<Co
             }
         })
         .collect()
+}
+
+fn cached_decide_items(
+    items: &[ContentItem],
+    ai_analyzer: &AiAnalyzer,
+) -> Option<Vec<ContentDecision>> {
+    let review_all = env_flag_default(REVIEW_ALL_ENV, true);
+    let ai_items: Vec<_> = items
+        .iter()
+        .filter(|item| should_ask_codex(item, review_all))
+        .cloned()
+        .collect();
+    let mut opinions_by_id: HashMap<_, _> = if ai_items.is_empty() {
+        HashMap::new()
+    } else {
+        ai_analyzer
+            .cached_x_opinions(&ai_items)?
+            .into_iter()
+            .map(|opinion| (opinion.client_id.clone(), opinion))
+            .collect()
+    };
+    let mut decisions = Vec::with_capacity(items.len());
+
+    for item in items {
+        if let Some(opinion) = opinions_by_id.remove(&item.client_id) {
+            decisions.push(opinion_decision(opinion));
+        } else if should_ask_codex(item, review_all) {
+            return None;
+        } else {
+            decisions.push(classify_item(item));
+        }
+    }
+
+    Some(decisions)
+}
+
+fn content_batch_from_extracted(extracted_items: &[ExtractedItem]) -> AnalysisBatch {
+    AnalysisBatch::new(
+        "x.com",
+        extracted_items
+            .iter()
+            .map(|extracted| extracted.item.clone())
+            .collect(),
+    )
+}
+
+fn record_content_batch(content_store: &ContentStore, content_batch: &AnalysisBatch) {
+    if let Err(error) = content_store.record_x_batch(content_batch) {
+        warn!(%error, "failed to store X content");
+    }
+}
+
+fn opinion_decision(opinion: AiOpinion) -> ContentDecision {
+    ContentDecision::label(
+        opinion.client_id,
+        format!("Summary: {}", opinion.opinion),
+        "Codex app-server summary",
+        opinion.confidence,
+    )
 }
 
 fn extract_items(batch: &DomAnalysisBatch) -> Vec<ExtractedItem> {
@@ -372,7 +448,10 @@ struct ExtractedItem {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::{DomAttribute, DomLink, PageSnapshot};
+    use crate::{
+        ai::AiAnalyzer,
+        core::{DecisionAction, DomAttribute, DomLink, PageSnapshot},
+    };
 
     fn batch(elements: Vec<DomElementSnapshot>) -> DomAnalysisBatch {
         batch_with_url("https://x.com/home", elements)
@@ -441,6 +520,19 @@ mod tests {
             content_id: None,
             url: url.map(ToOwned::to_owned),
             author: None,
+            text: text.into(),
+            captured_at: None,
+            kind: Some("post".into()),
+            metadata: serde_json::Value::Null,
+        }
+    }
+
+    fn content_item(client_id: &str, content_id: &str, text: &str) -> ContentItem {
+        ContentItem {
+            client_id: client_id.into(),
+            content_id: Some(content_id.into()),
+            url: Some(format!("https://x.com/user/status/{content_id}")),
+            author: Some("@user".into()),
             text: text.into(),
             captured_at: None,
             kind: Some("post".into()),
@@ -569,5 +661,57 @@ mod tests {
     #[test]
     fn empty_posts_without_url_do_not_go_to_codex_in_review_all_mode() {
         assert!(!should_ask_codex(&item("   ", None), true));
+    }
+
+    #[test]
+    fn cached_decisions_reuse_summary_for_same_status_id_with_changed_text() {
+        let cached_item = content_item("cached", "12345", "Timeline text");
+        let current_item = content_item("current", "12345", "Detail page text with extra context");
+        let ai_analyzer =
+            AiAnalyzer::for_tests_with_x_summaries(&[(&cached_item, "cached summary", 0.82)]);
+
+        let decisions =
+            cached_decide_items(&[current_item], &ai_analyzer).expect("summary should be cached");
+
+        assert_eq!(decisions.len(), 1);
+        assert!(matches!(decisions[0].action, DecisionAction::Label));
+        assert_eq!(decisions[0].client_id, "current");
+        assert_eq!(
+            decisions[0].label.as_deref(),
+            Some("Summary: cached summary")
+        );
+        assert_eq!(decisions[0].confidence, Some(0.82));
+    }
+
+    #[test]
+    fn cached_decisions_return_none_when_required_summary_is_missing() {
+        let current_item = content_item("current", "12345", "Needs a summary");
+        let ai_analyzer = AiAnalyzer::for_tests_with_x_summaries(&[]);
+
+        assert!(cached_decide_items(&[current_item], &ai_analyzer).is_none());
+    }
+
+    #[test]
+    fn pending_commands_skip_cached_items_in_mixed_batches() {
+        let cached_item = content_item("cached", "12345", "Timeline text");
+        let ai_analyzer =
+            AiAnalyzer::for_tests_with_x_summaries(&[(&cached_item, "cached summary", 0.82)]);
+        let batch = batch(vec![
+            element(
+                "client-1",
+                "Cached post text has changed",
+                Some("https://x.com/user/status/12345"),
+            ),
+            element(
+                "client-2",
+                "New post text",
+                Some("https://x.com/user/status/67890"),
+            ),
+        ]);
+
+        let commands = pending_dom_commands(&batch, &ai_analyzer);
+
+        assert_eq!(commands.len(), 1);
+        assert_eq!(commands[0].target.client_id, "client-2");
     }
 }

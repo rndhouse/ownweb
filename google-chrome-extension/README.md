@@ -18,9 +18,11 @@ The extension opens a WebSocket to:
 GET ws://127.0.0.1:17891/v1/events
 ```
 
-It sends DOM analysis events and receives command events. The daemon first
-pushes `pending` commands such as `OwnWeb: checking`, then pushes `final`
-commands after local analysis finishes.
+It sends DOM analysis events and receives command events. The daemon pushes
+`pending` commands such as `OwnWeb: checking` when analysis is needed, then
+pushes `final` commands after local analysis finishes. When a final answer is
+already cached, the daemon can push `final` immediately without a `pending`
+event.
 
 The REST endpoint remains available as a fallback and smoke-test path:
 
