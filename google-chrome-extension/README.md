@@ -1,6 +1,6 @@
-# OwnWeb X Filter
+# OwnWeb
 
-Chrome Manifest V3 extension that scans visible X/Twitter posts, sends post content to a local OwnWeb daemon, and applies the daemon's returned action.
+Chrome Manifest V3 extension that sends website content to a local OwnWeb daemon and applies the daemon's returned action. The current implementation supports X/Twitter posts.
 
 ## Load in Chrome
 
