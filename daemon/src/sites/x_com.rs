@@ -8,7 +8,7 @@ use crate::{
 };
 use serde_json::json;
 use std::collections::HashMap;
-use tracing::warn;
+use tracing::{trace, warn, Level};
 
 const SPAM_TERMS: &[&str] = &[
     "airdrop",
@@ -165,6 +165,8 @@ fn extract_item(batch: &DomAnalysisBatch, element: &DomElementSnapshot) -> Optio
             "snapshotHash": element.snapshot_hash,
         }),
     };
+    trace_identified_post(&item);
+
     let target = DomCommandTarget {
         client_id: element.client_id.clone(),
         selector: element.selector.clone(),
@@ -172,6 +174,23 @@ fn extract_item(batch: &DomAnalysisBatch, element: &DomElementSnapshot) -> Optio
     };
 
     Some(ExtractedItem { item, target })
+}
+
+fn trace_identified_post(item: &ContentItem) {
+    if !tracing::enabled!(target: "ownweb_daemon::sites::x_com", Level::TRACE) {
+        return;
+    }
+
+    if let Ok(tweet_json) = serde_json::to_string(item) {
+        trace!(
+            target: "ownweb_daemon::sites::x_com",
+            client_id = item.client_id.as_str(),
+            content_id = item.content_id.as_deref(),
+            url = item.url.as_deref(),
+            tweet = %tweet_json,
+            "identified X post"
+        );
+    }
 }
 
 fn commands_from_decisions(
