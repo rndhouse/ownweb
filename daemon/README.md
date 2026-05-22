@@ -89,6 +89,8 @@ RUST_LOG=debug
 - `POST /v1/dom/analyze`
 - `POST /v1/dom/feedback`
 - `GET /v1/content?site=x.com&q=codex`
+- `GET /v1/content/annotations?site=x.com&storageKey=x:id:123`
+- `POST /v1/content/annotations?site=x.com`
 - `GET /v1/content/stats?site=x.com`
 - `GET /v1/dislikes?site=x.com`
 - `GET /v1/rules?site=x.com`
@@ -104,7 +106,23 @@ region. Site-scoped inspection endpoints keep the path generic and take the
 site scope through the `site` query parameter. `/v1/content` lists recent stored
 content or searches it with SQLite FTS5 when `q` is provided. `/v1/content/stats`
 returns unique stored content rows and total captured encounters for the
-selected site.
+selected site. `/v1/content/annotations` lets agents attach tags, notes, topics,
+or other JSON metadata to stored content without changing the original captured
+content.
+
+Annotation request shape:
+
+```json
+{
+  "storageKey": "x:id:123",
+  "contentKind": "post",
+  "annotationType": "tag",
+  "key": "topics",
+  "value": ["local-ai", "tools"],
+  "confidence": 0.82,
+  "source": "agent:organizer"
+}
+```
 
 Request shape:
 
