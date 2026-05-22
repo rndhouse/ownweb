@@ -11,7 +11,6 @@ use tracing_subscriber::EnvFilter;
 
 const DEFAULT_BIND_ADDR: &str = "127.0.0.1:17891";
 const BIND_ADDR_ENV: &str = "OWNWEB_BIND_ADDR";
-const LEGACY_BIND_ADDR_ENV: &str = "PAIRPILOT_BIND_ADDR";
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -22,8 +21,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_writer(std::io::stdout)
         .init();
 
-    let bind_addr =
-        env_var(BIND_ADDR_ENV, LEGACY_BIND_ADDR_ENV).unwrap_or_else(|| DEFAULT_BIND_ADDR.into());
+    let bind_addr = std::env::var(BIND_ADDR_ENV).unwrap_or_else(|_| DEFAULT_BIND_ADDR.into());
     let addr: SocketAddr = bind_addr.parse()?;
 
     let listener = TcpListener::bind(addr).await?;
@@ -39,12 +37,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .await?;
 
     Ok(())
-}
-
-fn env_var(name: &str, legacy_name: &str) -> Option<String> {
-    std::env::var(name)
-        .ok()
-        .or_else(|| std::env::var(legacy_name).ok())
 }
 
 async fn shutdown_signal() {

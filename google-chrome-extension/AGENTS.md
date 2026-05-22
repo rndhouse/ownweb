@@ -26,4 +26,4 @@
 
 - Manual Chrome testing requires reloading the unpacked extension at `chrome://extensions`.
 - Restart the daemon when daemon code changes.
-- Refresh `x.com` after extension or daemon changes that affect content-script behavior.
+- Refresh the target page after extension or daemon changes that affect content-script behavior.

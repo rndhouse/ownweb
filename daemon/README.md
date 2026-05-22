@@ -68,9 +68,6 @@ OWNWEB_X_SUMMARY_CACHE_TTL_SECS=86400
 RUST_LOG=debug
 ```
 
-Legacy `PAIRPILOT_*` environment variables are still accepted as fallbacks
-during the rename.
-
 To restore the faster filtered mode later, only send suspicious or
 promotion-like posts through Codex:
 
@@ -81,15 +78,66 @@ OWNWEB_X_REVIEW_ALL=0 cargo run
 ## Endpoints
 
 - `GET /health`
-- `POST /v1/content/analyze`
-- `POST /v1/x-posts/analyze`
+- `POST /v1/dom/analyze`
 
-`/v1/content/analyze` is the generic endpoint. It accepts a `source` and
-normalized `items`, then dispatches to the matching site module.
+`/v1/dom/analyze` is the generic browser contract. The extension sends page
+metadata plus candidate DOM region snapshots. The daemon dispatches by page
+URL, interprets site-specific structures, stores normalized content, and
+returns DOM commands for the extension to apply.
 
-`/v1/x-posts/analyze` is the compatibility endpoint used by the current Chrome
-extension. It maps X post payloads into the generic content model before
-analysis.
+Request shape:
 
-Site-specific logic lives under `src/sites/`. The X analyzer currently uses
-simple placeholder heuristics.
+```json
+{
+  "page": {
+    "url": "https://x.com/home",
+    "title": "X",
+    "capturedAt": "2026-05-22T10:00:00.000Z"
+  },
+  "elements": [
+    {
+      "clientId": "dom:1",
+      "selector": "article:nth-of-type(1)",
+      "tagName": "article",
+      "role": "article",
+      "text": "Post text",
+      "html": "<article>...</article>",
+      "attributes": [{ "name": "data-testid", "value": "tweet" }],
+      "links": [
+        {
+          "href": "https://x.com/user/status/123",
+          "text": "status",
+          "ariaLabel": null
+        }
+      ],
+      "snapshotHash": "abc123",
+      "capturedAt": "2026-05-22T10:00:00.000Z"
+    }
+  ]
+}
+```
+
+Response shape:
+
+```json
+{
+  "commands": [
+    {
+      "action": "insertLabel",
+      "target": {
+        "clientId": "dom:1",
+        "selector": "article:nth-of-type(1)",
+        "mustMatchSnapshotHash": "abc123"
+      },
+      "label": "Summary: Post summary",
+      "text": null,
+      "reason": "Codex app-server summary",
+      "confidence": 0.8
+    }
+  ]
+}
+```
+
+Supported command actions are `keep`, `hide`, `dim`, `insertLabel`, and
+`replaceText`. Site-specific logic lives under `src/sites/`; the extension
+stays generic and only captures DOM regions and executes commands.

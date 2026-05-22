@@ -14,10 +14,8 @@
   "content_scripts": [
     {
       "matches": [
-        "https://x.com/*",
-        "https://www.x.com/*",
-        "https://twitter.com/*",
-        "https://www.twitter.com/*"
+        "http://*/*",
+        "https://*/*"
       ],
       "js": ["contentScript.js"],
       "css": ["content.css"],

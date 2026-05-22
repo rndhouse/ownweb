@@ -11,7 +11,6 @@ use summary_cache::SummaryCache;
 use tracing::warn;
 
 const CODEX_ENABLED_ENV: &str = "OWNWEB_CODEX_APP_ENABLED";
-const LEGACY_CODEX_ENABLED_ENV: &str = "PAIRPILOT_CODEX_APP_ENABLED";
 
 /// Shared AI analyzer used by site handlers.
 #[derive(Clone)]
@@ -23,7 +22,7 @@ pub struct AiAnalyzer {
 impl AiAnalyzer {
     /// Builds the analyzer from local daemon environment variables.
     pub fn from_env() -> Self {
-        let codex_enabled = env_flag_default(CODEX_ENABLED_ENV, LEGACY_CODEX_ENABLED_ENV, true);
+        let codex_enabled = env_flag_default(CODEX_ENABLED_ENV, true);
 
         let codex_app = codex_enabled.then(|| Arc::new(codex_app::CodexAppAnalyzer::from_env()));
         Self {
@@ -97,9 +96,8 @@ impl AiAnalyzer {
     }
 }
 
-fn env_flag_default(name: &str, legacy_name: &str, default: bool) -> bool {
+fn env_flag_default(name: &str, default: bool) -> bool {
     std::env::var(name)
-        .or_else(|_| std::env::var(legacy_name))
         .map(|value| value != "0" && !value.eq_ignore_ascii_case("false"))
         .unwrap_or(default)
 }

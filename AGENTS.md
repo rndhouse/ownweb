@@ -34,17 +34,19 @@
 ## Runtime Boundary Policy
 
 - Treat the browser extension and daemon boundary as a hard architecture boundary.
-- The Chrome extension is client-side page integration:
-  - observes X/Twitter DOM changes
-  - extracts post content and metadata
-  - sends normalized post payloads to the local daemon
-  - applies daemon decisions to the browser view
+- The Chrome extension is a generic client-side DOM bridge:
+  - observes page DOM changes
+  - captures bounded candidate DOM region snapshots
+  - sends page metadata and snapshots to the local daemon
+  - applies daemon DOM commands to the browser view
 - The Rust daemon is authoritative for filtering decisions:
+  - site-specific DOM interpretation
+  - normalized content storage
   - spam or generated-content classification
-  - final `keep`, `hide`, `dim`, `label`, or `replace` decisions
-  - decision reasons and confidence values
+  - final `keep`, `hide`, `dim`, `insertLabel`, or `replaceText` commands
+  - command reasons and confidence values
 - Do not place authoritative filtering policy in the extension.
-- Keep the REST contract explicit and backwards-compatible while local users may have an older daemon or extension process running.
+- Keep the REST contract explicit and documented.
 
 ## Documentation Policy
 

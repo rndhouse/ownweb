@@ -18,15 +18,10 @@ const DEFAULT_MODEL: &str = "gpt-5.3-codex-spark";
 const DEFAULT_EFFORT: &str = "low";
 const DEFAULT_TIMEOUT_MS: u64 = 8000;
 const WS_ENV: &str = "OWNWEB_CODEX_APP_WS";
-const LEGACY_WS_ENV: &str = "PAIRPILOT_CODEX_APP_WS";
 const MODEL_ENV: &str = "OWNWEB_CODEX_MODEL";
-const LEGACY_MODEL_ENV: &str = "PAIRPILOT_CODEX_MODEL";
 const EFFORT_ENV: &str = "OWNWEB_CODEX_EFFORT";
-const LEGACY_EFFORT_ENV: &str = "PAIRPILOT_CODEX_EFFORT";
 const TIMEOUT_ENV: &str = "OWNWEB_CODEX_TIMEOUT_MS";
-const LEGACY_TIMEOUT_ENV: &str = "PAIRPILOT_CODEX_TIMEOUT_MS";
 const CWD_ENV: &str = "OWNWEB_CODEX_CWD";
-const LEGACY_CWD_ENV: &str = "PAIRPILOT_CODEX_CWD";
 
 /// Codex app-server analyzer backed by one local app-server process.
 pub struct CodexAppAnalyzer {
@@ -194,14 +189,13 @@ struct CodexAppConfig {
 
 impl CodexAppConfig {
     fn from_env() -> Self {
-        let ws_url = env_var(WS_ENV, LEGACY_WS_ENV).unwrap_or_else(|| DEFAULT_WS_URL.into());
-        let model = env_var(MODEL_ENV, LEGACY_MODEL_ENV).unwrap_or_else(|| DEFAULT_MODEL.into());
-        let effort =
-            env_var(EFFORT_ENV, LEGACY_EFFORT_ENV).unwrap_or_else(|| DEFAULT_EFFORT.into());
-        let timeout_ms = env_var(TIMEOUT_ENV, LEGACY_TIMEOUT_ENV)
+        let ws_url = env_var(WS_ENV).unwrap_or_else(|| DEFAULT_WS_URL.into());
+        let model = env_var(MODEL_ENV).unwrap_or_else(|| DEFAULT_MODEL.into());
+        let effort = env_var(EFFORT_ENV).unwrap_or_else(|| DEFAULT_EFFORT.into());
+        let timeout_ms = env_var(TIMEOUT_ENV)
             .and_then(|value| value.parse().ok())
             .unwrap_or(DEFAULT_TIMEOUT_MS);
-        let cwd = env_var(CWD_ENV, LEGACY_CWD_ENV).unwrap_or_else(|| {
+        let cwd = env_var(CWD_ENV).unwrap_or_else(|| {
             Path::new(env!("CARGO_MANIFEST_DIR"))
                 .parent()
                 .unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")))
@@ -219,10 +213,8 @@ impl CodexAppConfig {
     }
 }
 
-fn env_var(name: &str, legacy_name: &str) -> Option<String> {
-    std::env::var(name)
-        .ok()
-        .or_else(|| std::env::var(legacy_name).ok())
+fn env_var(name: &str) -> Option<String> {
+    std::env::var(name).ok()
 }
 
 #[derive(Default)]

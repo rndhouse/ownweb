@@ -1,15 +1,15 @@
 const DEFAULT_DAEMON_ORIGIN = "http://127.0.0.1:17891";
-const ANALYZE_PATH = "/v1/x-posts/analyze";
+const ANALYZE_PATH = "/v1/dom/analyze";
 const REQUEST_TIMEOUT_MS = 20000;
-const MAX_POSTS_PER_REQUEST = 8;
+const MAX_ELEMENTS_PER_REQUEST = 16;
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-  if (!message || message.type !== "ownweb:analyzePosts") {
+  if (!message || message.type !== "ownweb:analyzeDom") {
     return false;
   }
 
-  analyzePosts(message.posts)
-    .then((decisions) => sendResponse({ ok: true, decisions }))
+  analyzeDom(message)
+    .then((commands) => sendResponse({ ok: true, commands }))
     .catch((error) => {
       sendResponse({
         ok: false,
@@ -20,51 +20,83 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   return true;
 });
 
-async function analyzePosts(posts) {
-  if (!Array.isArray(posts)) {
-    throw new Error("Expected posts to be an array.");
-  }
-
-  const safePosts = posts.slice(0, MAX_POSTS_PER_REQUEST).map(normalizePost);
-  if (safePosts.length === 0) {
+async function analyzeDom(message) {
+  const elements = Array.isArray(message.elements)
+    ? message.elements.slice(0, MAX_ELEMENTS_PER_REQUEST).map(normalizeElement)
+    : [];
+  if (elements.length === 0) {
     return [];
   }
 
   const settings = await getSettings();
   const response = await postJson(settings.daemonOrigin, ANALYZE_PATH, {
-    source: "x.com",
-    posts: safePosts
+    page: normalizePage(message.page),
+    elements
   });
 
-  if (!Array.isArray(response.posts)) {
-    throw new Error("Daemon response must include a posts array.");
+  if (!Array.isArray(response.commands)) {
+    throw new Error("Daemon response must include a commands array.");
   }
 
-  return response.posts.map(normalizeDecision);
+  return response.commands.map(normalizeCommand);
 }
 
-function normalizePost(post) {
+function normalizePage(page) {
   return {
-    clientId: stringOrEmpty(post.clientId),
-    postId: stringOrNull(post.postId),
-    url: stringOrNull(post.url),
-    authorHandle: stringOrNull(post.authorHandle),
-    text: stringOrEmpty(post.text),
-    capturedAt: stringOrNull(post.capturedAt)
+    url: stringOrEmpty(page && page.url),
+    title: stringOrNull(page && page.title),
+    capturedAt: stringOrNull(page && page.capturedAt)
   };
 }
 
-function normalizeDecision(decision) {
-  const action = stringOrEmpty(decision.action).toLowerCase();
-  const allowedActions = new Set(["keep", "hide", "dim", "label", "replace"]);
+function normalizeElement(element) {
+  return {
+    clientId: stringOrEmpty(element.clientId),
+    selector: stringOrNull(element.selector),
+    tagName: stringOrNull(element.tagName),
+    role: stringOrNull(element.role),
+    text: stringOrEmpty(element.text),
+    html: stringOrNull(element.html),
+    attributes: Array.isArray(element.attributes)
+      ? element.attributes.map(normalizeAttribute)
+      : [],
+    links: Array.isArray(element.links) ? element.links.map(normalizeLink) : [],
+    snapshotHash: stringOrNull(element.snapshotHash),
+    capturedAt: stringOrNull(element.capturedAt)
+  };
+}
+
+function normalizeAttribute(attribute) {
+  return {
+    name: stringOrEmpty(attribute && attribute.name),
+    value: stringOrEmpty(attribute && attribute.value)
+  };
+}
+
+function normalizeLink(link) {
+  return {
+    href: stringOrEmpty(link && link.href),
+    text: stringOrNull(link && link.text),
+    ariaLabel: stringOrNull(link && link.ariaLabel)
+  };
+}
+
+function normalizeCommand(command) {
+  const action = stringOrEmpty(command.action);
+  const allowedActions = new Set(["keep", "hide", "dim", "insertLabel", "replaceText"]);
+  const target = command.target && typeof command.target === "object" ? command.target : {};
 
   return {
-    clientId: stringOrEmpty(decision.clientId),
     action: allowedActions.has(action) ? action : "keep",
-    label: stringOrNull(decision.label),
-    reason: stringOrNull(decision.reason),
-    replacementText: stringOrNull(decision.replacementText),
-    confidence: Number.isFinite(decision.confidence) ? decision.confidence : null
+    target: {
+      clientId: stringOrEmpty(target.clientId),
+      selector: stringOrNull(target.selector),
+      mustMatchSnapshotHash: stringOrNull(target.mustMatchSnapshotHash)
+    },
+    label: stringOrNull(command.label),
+    text: stringOrNull(command.text),
+    reason: stringOrNull(command.reason),
+    confidence: Number.isFinite(command.confidence) ? command.confidence : null
   };
 }
 

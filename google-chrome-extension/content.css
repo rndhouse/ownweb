@@ -26,6 +26,6 @@
   overflow-wrap: anywhere;
 }
 
-.ownweb-replaced [data-testid="tweetText"] {
+.ownweb-replaced {
   color: #536471 !important;
 }

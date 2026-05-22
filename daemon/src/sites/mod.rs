@@ -1,32 +1,32 @@
 use crate::{
     ai::AiAnalyzer,
-    core::{AnalysisBatch, ContentDecision},
+    core::{DomAnalysisBatch, DomCommand},
+    storage::ContentStore,
 };
 
 pub mod x_com;
 
-/// Dispatches an analysis batch to the matching site handler.
-pub async fn analyze(batch: &AnalysisBatch, ai_analyzer: &AiAnalyzer) -> Vec<ContentDecision> {
-    match normalize_source(&batch.source).as_str() {
-        "x.com" | "twitter.com" => x_com::analyze(&batch.items, ai_analyzer).await,
-        _ => keep_all(batch),
+/// Dispatches a DOM snapshot to the matching site handler.
+pub async fn analyze_dom(
+    batch: &DomAnalysisBatch,
+    ai_analyzer: &AiAnalyzer,
+    content_store: &ContentStore,
+) -> Vec<DomCommand> {
+    match page_host(&batch.page.url).as_deref() {
+        Some("x.com") | Some("twitter.com") => {
+            x_com::analyze_dom(batch, ai_analyzer, content_store).await
+        }
+        _ => Vec::new(),
     }
 }
 
-fn normalize_source(source: &str) -> String {
-    source
+fn page_host(url: &str) -> Option<String> {
+    let without_scheme = url
         .trim()
         .trim_start_matches("https://")
         .trim_start_matches("http://")
-        .trim_start_matches("www.")
-        .trim_end_matches('/')
-        .to_ascii_lowercase()
-}
+        .trim_start_matches("www.");
+    let host = without_scheme.split('/').next()?.split(':').next()?.trim();
 
-fn keep_all(batch: &AnalysisBatch) -> Vec<ContentDecision> {
-    batch
-        .items
-        .iter()
-        .map(|item| ContentDecision::keep(item.client_id.clone()))
-        .collect()
+    (!host.is_empty()).then(|| host.to_ascii_lowercase())
 }
