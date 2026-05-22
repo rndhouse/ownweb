@@ -280,6 +280,11 @@ function applyCommands(commands) {
       continue;
     }
 
+    if (command.action === "insertFeedbackControl") {
+      insertFeedbackControl(element, command);
+      continue;
+    }
+
     clearOwnWebChanges(element);
     element.dataset.ownwebState = command.action || "keep";
 
@@ -441,33 +446,115 @@ function insertBadge(element, command) {
   const badgeText = command.label || command.reason || "OwnWeb";
   const badge = document.createElement("div");
   const text = document.createElement("span");
-  const clientId = command.target && command.target.clientId
-    ? command.target.clientId
-    : getClientId(element);
 
   badge.className = "ownweb-badge";
   badge.dataset.ownwebUi = "true";
-  badge.dataset.ownwebClientId = clientId;
 
   text.className = "ownweb-badge-text";
   text.dataset.ownwebUi = "true";
   text.textContent = badgeText;
 
-  badge.append(text, createFeedbackButton(clientId));
+  badge.append(text);
   element.prepend(badge);
 }
 
-function createFeedbackButton(clientId) {
+function insertFeedbackControl(element, command) {
+  const clientId = command.target && command.target.clientId
+    ? command.target.clientId
+    : getClientId(element);
+  const existingButton = element.querySelector(
+    `.ownweb-feedback-button[data-ownweb-client-id="${cssEscape(clientId)}"]`
+  );
+  if (existingButton) {
+    return;
+  }
+
+  const actionBar = findActionBar(element);
+  if (!actionBar) {
+    return;
+  }
+
+  const likeSlot = findActionSlot(actionBar, "[data-testid='like'], [data-testid='unlike']");
+  const slot = createFeedbackSlot(likeSlot || actionBar.firstElementChild);
+  slot.dataset.ownwebUi = "true";
+  slot.append(createFeedbackButton(clientId, command.label || "Hide this post"));
+
+  if (likeSlot && likeSlot.parentElement === actionBar && likeSlot.nextSibling) {
+    actionBar.insertBefore(slot, likeSlot.nextSibling);
+  } else {
+    actionBar.append(slot);
+  }
+}
+
+function createFeedbackSlot(referenceSlot) {
+  const slot = document.createElement(
+    referenceSlot && referenceSlot.tagName
+      ? referenceSlot.tagName.toLowerCase()
+      : "div"
+  );
+  const referenceClass = referenceSlot && typeof referenceSlot.className === "string"
+    ? referenceSlot.className
+    : "";
+  slot.className = referenceClass
+    ? `${referenceClass} ownweb-feedback-slot`
+    : "ownweb-feedback-slot";
+  return slot;
+}
+
+function createFeedbackButton(clientId, label) {
   const button = document.createElement("button");
   button.type = "button";
   button.className = "ownweb-feedback-button";
   button.dataset.ownwebUi = "true";
   button.dataset.ownwebClientId = clientId;
   button.dataset.ownwebFeedback = "thumbsDown";
-  button.title = "Hide this post";
-  button.setAttribute("aria-label", "Hide this post");
-  button.textContent = "\uD83D\uDC4E";
+  button.title = label;
+  button.setAttribute("aria-label", label);
+  button.append(createThumbsDownIcon());
   return button;
+}
+
+function createThumbsDownIcon() {
+  const namespace = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(namespace, "svg");
+  const path = document.createElementNS(namespace, "path");
+
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("aria-hidden", "true");
+  svg.setAttribute("class", "ownweb-feedback-icon");
+  path.setAttribute(
+    "d",
+    "M10 15v4a3 3 0 0 0 3 3l4-9V2H5.7a2 2 0 0 0-2 1.7l-1.4 9A2 2 0 0 0 4.3 15H10Zm7-13h2.7A2.3 2.3 0 0 1 22 4.3v6.4a2.3 2.3 0 0 1-2.3 2.3H17V2Z"
+  );
+  svg.append(path);
+  return svg;
+}
+
+function findActionBar(element) {
+  const candidates = Array.from(element.querySelectorAll("[role='group']"))
+    .filter(isVisibleRegion)
+    .filter((candidate) => candidate.querySelectorAll("button, [role='button']").length >= 2)
+    .sort((left, right) => {
+      const leftRect = left.getBoundingClientRect();
+      const rightRect = right.getBoundingClientRect();
+      return rightRect.top - leftRect.top;
+    });
+
+  return candidates[0] || null;
+}
+
+function findActionSlot(actionBar, selector) {
+  const control = actionBar.querySelector(selector);
+  if (!control) {
+    return null;
+  }
+
+  let current = control;
+  while (current.parentElement && current.parentElement !== actionBar) {
+    current = current.parentElement;
+  }
+
+  return current.parentElement === actionBar ? current : null;
 }
 
 function markBatchUnavailable(batch, error) {

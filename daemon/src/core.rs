@@ -222,23 +222,6 @@ impl ContentDecision {
             confidence: Some(confidence),
         }
     }
-
-    /// Creates a decision that attaches a label to content.
-    pub fn label(
-        client_id: impl Into<String>,
-        label: impl Into<String>,
-        reason: impl Into<String>,
-        confidence: f32,
-    ) -> Self {
-        Self {
-            client_id: client_id.into(),
-            action: DecisionAction::Label,
-            label: Some(label.into()),
-            reason: Some(reason.into()),
-            replacement_text: None,
-            confidence: Some(confidence),
-        }
-    }
 }
 
 /// A command that the browser extension can apply to the live DOM.
@@ -280,14 +263,14 @@ impl DomCommand {
         }
     }
 
-    /// Builds a command that gates content while daemon analysis is still running.
-    pub fn checking(target: DomCommandTarget) -> Self {
+    /// Builds a command that installs a user-feedback control in the region.
+    pub fn feedback_control(target: DomCommandTarget) -> Self {
         Self {
-            action: DomCommandAction::Dim,
+            action: DomCommandAction::InsertFeedbackControl,
             target,
-            label: Some("OwnWeb: checking".into()),
+            label: Some("Hide this post".into()),
             text: None,
-            reason: Some("Waiting for local analysis".into()),
+            reason: Some("User feedback control".into()),
             confidence: None,
         }
     }
@@ -305,6 +288,8 @@ pub enum DomCommandAction {
     Dim,
     /// Insert a label into the region.
     InsertLabel,
+    /// Insert a user-feedback control into the region.
+    InsertFeedbackControl,
     /// Replace the region text.
     ReplaceText,
 }

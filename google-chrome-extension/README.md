@@ -18,11 +18,10 @@ The extension opens a WebSocket to:
 GET ws://127.0.0.1:17891/v1/events
 ```
 
-It sends DOM analysis events and receives command events. The daemon pushes
-`pending` commands such as `OwnWeb: checking` when analysis is needed, then
-pushes `final` commands after local analysis finishes. When a final answer is
-already cached, the daemon can push `final` immediately without a `pending`
-event.
+It sends DOM analysis events and receives command events. The daemon can push
+immediate `pending` commands, such as `insertFeedbackControl`, before local
+analysis finishes. When a final answer is already cached, the daemon can push
+`final` immediately without a `pending` event.
 
 The REST endpoint remains available as a fallback and smoke-test path:
 
@@ -31,8 +30,8 @@ POST http://127.0.0.1:17891/v1/dom/analyze
 Content-Type: application/json
 ```
 
-The extension also sends user feedback to the daemon. A thumbs-down click on an
-OwnWeb badge posts the current region snapshot to:
+The extension also sends user feedback to the daemon. A thumbs-down click posts
+the current region snapshot to:
 
 ```http
 POST http://127.0.0.1:17891/v1/dom/feedback
@@ -82,24 +81,25 @@ WebSocket command event shape:
   "phase": "final",
   "commands": [
     {
-      "action": "insertLabel",
+      "action": "insertFeedbackControl",
       "target": {
         "clientId": "dom:1",
         "selector": "article:nth-of-type(1)",
         "mustMatchSnapshotHash": "abc123"
       },
-      "label": "Summary: Post summary",
+      "label": "Hide this post",
       "text": null,
-      "reason": "Codex app-server summary",
-      "confidence": 0.8
+      "reason": "User feedback control",
+      "confidence": null
     }
   ]
 }
 ```
 
-Supported actions are `keep`, `hide`, `dim`, `insertLabel`, and
-`replaceText`. The extension does not make site-specific filtering decisions;
-the daemon interprets supported sites and decides what commands to return.
+Supported actions are `keep`, `hide`, `dim`, `insertLabel`,
+`insertFeedbackControl`, and `replaceText`. The extension does not make
+site-specific filtering decisions; the daemon interprets supported sites and
+decides what commands to return.
 
 Feedback request shape:
 

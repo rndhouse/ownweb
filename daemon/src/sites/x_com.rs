@@ -86,23 +86,14 @@ pub fn cached_dom_commands(
     Some(commands_from_decisions(extracted_items, decisions))
 }
 
-/// Returns immediate commands that gate identified X posts during analysis.
-pub fn pending_dom_commands(batch: &DomAnalysisBatch, ai_analyzer: &AiAnalyzer) -> Vec<DomCommand> {
-    let review_all = env_flag_default(REVIEW_ALL_ENV, true);
-
+/// Returns immediate commands that install controls for identified X posts.
+pub fn pending_dom_commands(
+    batch: &DomAnalysisBatch,
+    _ai_analyzer: &AiAnalyzer,
+) -> Vec<DomCommand> {
     extract_items(batch)
         .into_iter()
-        .filter_map(|extracted| {
-            if !should_ask_codex(&extracted.item, review_all)
-                || ai_analyzer
-                    .cached_x_opinions(std::slice::from_ref(&extracted.item))
-                    .is_some()
-            {
-                return None;
-            }
-
-            Some(DomCommand::checking(extracted.target))
-        })
+        .map(|extracted| DomCommand::feedback_control(extracted.target))
         .collect()
 }
 
@@ -162,9 +153,9 @@ async fn decide_items(items: &[ContentItem], ai_analyzer: &AiAnalyzer) -> Vec<Co
                 .iter()
                 .map(|item| {
                     if let Some(opinion) = opinions_by_id.remove(&item.client_id) {
-                        opinion_decision(opinion)
+                        reviewed_item_decision(opinion)
                     } else if review_all && has_prompt_content(item) {
-                        summary_unavailable(item)
+                        ContentDecision::keep(item.client_id.clone())
                     } else if should_ask_codex(item, review_all) {
                         classify_item(item)
                     } else {
@@ -179,7 +170,7 @@ async fn decide_items(items: &[ContentItem], ai_analyzer: &AiAnalyzer) -> Vec<Co
         .iter()
         .map(|item| {
             if review_all && has_prompt_content(item) {
-                summary_unavailable(item)
+                ContentDecision::keep(item.client_id.clone())
             } else {
                 classify_item(item)
             }
@@ -210,7 +201,7 @@ fn cached_decide_items(
 
     for item in items {
         if let Some(opinion) = opinions_by_id.remove(&item.client_id) {
-            decisions.push(opinion_decision(opinion));
+            decisions.push(reviewed_item_decision(opinion));
         } else if should_ask_codex(item, review_all) {
             return None;
         } else {
@@ -237,13 +228,8 @@ fn record_content_batch(content_store: &ContentStore, content_batch: &AnalysisBa
     }
 }
 
-fn opinion_decision(opinion: AiOpinion) -> ContentDecision {
-    ContentDecision::label(
-        opinion.client_id,
-        format!("Summary: {}", opinion.opinion),
-        "Codex app-server summary",
-        opinion.confidence,
-    )
+fn reviewed_item_decision(opinion: AiOpinion) -> ContentDecision {
+    ContentDecision::keep(opinion.client_id)
 }
 
 fn extract_items(batch: &DomAnalysisBatch) -> Vec<ExtractedItem> {
@@ -359,10 +345,14 @@ fn commands_from_decisions(
 
     extracted_items
         .into_iter()
-        .filter_map(|extracted| {
-            decisions_by_id
-                .remove(&extracted.item.client_id)
-                .map(|decision| DomCommand::from_decision(decision, extracted.target))
+        .flat_map(|extracted| {
+            let mut commands = vec![DomCommand::feedback_control(extracted.target.clone())];
+
+            if let Some(decision) = decisions_by_id.remove(&extracted.item.client_id) {
+                commands.push(DomCommand::from_decision(decision, extracted.target));
+            }
+
+            commands
         })
         .collect()
 }
@@ -413,15 +403,6 @@ fn has_prompt_content(item: &ContentItem) -> bool {
             .url
             .as_deref()
             .is_some_and(|url| !url.trim().is_empty())
-}
-
-fn summary_unavailable(item: &ContentItem) -> ContentDecision {
-    ContentDecision::label(
-        item.client_id.clone(),
-        "Summary: Codex summary unavailable",
-        "Codex app-server did not return a summary",
-        0.0,
-    )
 }
 
 fn find_status_href(element: &DomElementSnapshot) -> Option<String> {
@@ -683,7 +664,7 @@ mod tests {
     }
 
     #[test]
-    fn review_all_sends_ordinary_posts_to_codex_for_summaries() {
+    fn review_all_sends_ordinary_posts_to_codex_for_review() {
         assert!(should_ask_codex(&item("Just a normal post.", None), true));
     }
 
@@ -701,7 +682,7 @@ mod tests {
     }
 
     #[test]
-    fn cached_decisions_reuse_summary_for_same_status_id_with_changed_text() {
+    fn cached_decisions_reuse_summary_without_showing_it() {
         let cached_item = content_item("cached", "12345", "Timeline text");
         let current_item = content_item("current", "12345", "Detail page text with extra context");
         let ai_analyzer =
@@ -711,13 +692,9 @@ mod tests {
             cached_decide_items(&[current_item], &ai_analyzer).expect("summary should be cached");
 
         assert_eq!(decisions.len(), 1);
-        assert!(matches!(decisions[0].action, DecisionAction::Label));
+        assert!(matches!(decisions[0].action, DecisionAction::Keep));
         assert_eq!(decisions[0].client_id, "current");
-        assert_eq!(
-            decisions[0].label.as_deref(),
-            Some("Summary: cached summary")
-        );
-        assert_eq!(decisions[0].confidence, Some(0.82));
+        assert_eq!(decisions[0].label, None);
     }
 
     #[test]
@@ -729,7 +706,7 @@ mod tests {
     }
 
     #[test]
-    fn pending_commands_skip_cached_items_in_mixed_batches() {
+    fn pending_commands_install_feedback_controls_for_all_posts() {
         let cached_item = content_item("cached", "12345", "Timeline text");
         let ai_analyzer =
             AiAnalyzer::for_tests_with_x_summaries(&[(&cached_item, "cached summary", 0.82)]);
@@ -748,8 +725,13 @@ mod tests {
 
         let commands = pending_dom_commands(&batch, &ai_analyzer);
 
-        assert_eq!(commands.len(), 1);
-        assert_eq!(commands[0].target.client_id, "client-2");
+        assert_eq!(commands.len(), 2);
+        assert!(commands.iter().all(|command| matches!(
+            command.action,
+            crate::core::DomCommandAction::InsertFeedbackControl
+        )));
+        assert_eq!(commands[0].target.client_id, "client-1");
+        assert_eq!(commands[1].target.client_id, "client-2");
     }
 
     #[test]

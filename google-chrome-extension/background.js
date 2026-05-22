@@ -313,7 +313,14 @@ function normalizeLink(link) {
 
 function normalizeCommand(command) {
   const action = stringOrEmpty(command.action);
-  const allowedActions = new Set(["keep", "hide", "dim", "insertLabel", "replaceText"]);
+  const allowedActions = new Set([
+    "keep",
+    "hide",
+    "dim",
+    "insertLabel",
+    "insertFeedbackControl",
+    "replaceText"
+  ]);
   const target = command.target && typeof command.target === "object" ? command.target : {};
 
   return {
