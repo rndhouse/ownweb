@@ -12,17 +12,29 @@ local OwnWeb daemon and applies the daemon's returned DOM commands.
 
 ## Daemon contract
 
-The extension sends batched requests to:
+The extension opens a WebSocket to:
+
+```http
+GET ws://127.0.0.1:17891/v1/events
+```
+
+It sends DOM analysis events and receives command events. The daemon first
+pushes `pending` commands such as `OwnWeb: checking`, then pushes `final`
+commands after local analysis finishes.
+
+The REST endpoint remains available as a fallback and smoke-test path:
 
 ```http
 POST http://127.0.0.1:17891/v1/dom/analyze
 Content-Type: application/json
 ```
 
-Request shape:
+WebSocket request shape:
 
 ```json
 {
+  "type": "analyzeDom",
+  "requestId": "dom:1",
   "page": {
     "url": "https://x.com/home",
     "title": "X",
@@ -51,10 +63,13 @@ Request shape:
 }
 ```
 
-Response shape:
+WebSocket command event shape:
 
 ```json
 {
+  "type": "commands",
+  "requestId": "dom:1",
+  "phase": "final",
   "commands": [
     {
       "action": "insertLabel",

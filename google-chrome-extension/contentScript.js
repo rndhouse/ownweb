@@ -27,6 +27,16 @@ observer.observe(document.documentElement, {
   characterData: true
 });
 
+chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (!message || message.type !== "ownweb:applyCommands") {
+    return false;
+  }
+
+  applyCommands(Array.isArray(message.commands) ? message.commands : []);
+  sendResponse({ ok: true });
+  return false;
+});
+
 function scheduleScan() {
   if (scanTimer !== null) {
     return;

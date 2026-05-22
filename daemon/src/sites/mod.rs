@@ -6,6 +6,14 @@ use crate::{
 
 pub mod x_com;
 
+/// Returns immediate browser commands for content that should be gated.
+pub fn pending_dom_commands(batch: &DomAnalysisBatch) -> Vec<DomCommand> {
+    match page_host(&batch.page.url).as_deref() {
+        Some("x.com") | Some("twitter.com") => x_com::pending_dom_commands(batch),
+        _ => Vec::new(),
+    }
+}
+
 /// Dispatches a DOM snapshot to the matching site handler.
 pub async fn analyze_dom(
     batch: &DomAnalysisBatch,

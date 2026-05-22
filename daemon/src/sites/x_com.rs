@@ -76,6 +76,14 @@ pub async fn analyze_dom(
     commands_from_decisions(extracted_items, decisions)
 }
 
+/// Returns immediate commands that gate identified X posts during analysis.
+pub fn pending_dom_commands(batch: &DomAnalysisBatch) -> Vec<DomCommand> {
+    extract_items(batch)
+        .into_iter()
+        .map(|extracted| DomCommand::checking(extracted.target))
+        .collect()
+}
+
 async fn decide_items(items: &[ContentItem], ai_analyzer: &AiAnalyzer) -> Vec<ContentDecision> {
     let review_all = env_flag_default(REVIEW_ALL_ENV, true);
     let ai_items: Vec<_> = items

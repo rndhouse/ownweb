@@ -5,15 +5,19 @@ use crate::{
     storage::{ContentStore, StorageError},
 };
 use axum::{
+    extract::ws::{Message, WebSocket, WebSocketUpgrade},
     extract::State,
     http::{header, Method},
+    response::IntoResponse,
     routing::{get, post},
     Json, Router,
 };
-use serde::Serialize;
+use futures_util::{SinkExt, StreamExt};
+use serde::{Deserialize, Serialize};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use tokio::sync::mpsc;
 use tower_http::cors::{Any, CorsLayer};
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 const LOG_CAPTURED_CONTENT_ENV: &str = "OWNWEB_LOG_CAPTURED_CONTENT";
 
@@ -27,6 +31,7 @@ pub fn router() -> Result<Router, StorageError> {
 
     Ok(Router::new()
         .route("/health", get(health))
+        .route("/v1/events", get(events_ws))
         .route("/v1/dom/analyze", post(analyze_dom))
         .with_state(state)
         .layer(cors_layer()))
@@ -52,6 +57,10 @@ async fn health() -> Json<HealthResponse> {
     })
 }
 
+async fn events_ws(State(state): State<AppState>, ws: WebSocketUpgrade) -> impl IntoResponse {
+    ws.on_upgrade(move |socket| handle_event_socket(socket, state))
+}
+
 async fn analyze_dom(
     State(state): State<AppState>,
     Json(batch): Json<DomAnalysisBatch>,
@@ -63,6 +72,91 @@ async fn analyze_dom(
     Json(DomAnalyzeResponse {
         commands: sites::analyze_dom(&batch, &state.ai_analyzer, &state.content_store).await,
     })
+}
+
+async fn handle_event_socket(socket: WebSocket, state: AppState) {
+    let (mut sender, mut receiver) = socket.split();
+    let (event_sender, mut event_receiver) = mpsc::unbounded_channel::<ServerEvent>();
+
+    let writer = tokio::spawn(async move {
+        while let Some(event) = event_receiver.recv().await {
+            let Ok(json) = serde_json::to_string(&event) else {
+                warn!("failed to serialize WebSocket event");
+                continue;
+            };
+
+            if let Err(error) = sender.send(Message::Text(json.into())).await {
+                debug!(%error, "failed to send WebSocket event");
+                break;
+            }
+        }
+    });
+
+    while let Some(message) = receiver.next().await {
+        match message {
+            Ok(Message::Text(text)) => {
+                handle_client_event(text.as_str(), state.clone(), event_sender.clone()).await;
+            }
+            Ok(Message::Close(_)) => break,
+            Ok(Message::Ping(_)) | Ok(Message::Pong(_)) | Ok(Message::Binary(_)) => {}
+            Err(error) => {
+                debug!(%error, "WebSocket receive failed");
+                break;
+            }
+        }
+    }
+
+    drop(event_sender);
+    if let Err(error) = writer.await {
+        debug!(%error, "WebSocket writer task failed");
+    }
+}
+
+async fn handle_client_event(
+    text: &str,
+    state: AppState,
+    event_sender: mpsc::UnboundedSender<ServerEvent>,
+) {
+    let event = match serde_json::from_str::<ClientEvent>(text) {
+        Ok(event) => event,
+        Err(error) => {
+            warn!(%error, "failed to parse WebSocket event");
+            return;
+        }
+    };
+
+    match event {
+        ClientEvent::AnalyzeDom {
+            request_id,
+            page,
+            elements,
+        } => {
+            let batch = DomAnalysisBatch { page, elements };
+            if state.log_captured_content {
+                log_dom_batch(&batch);
+            }
+
+            let pending_commands = sites::pending_dom_commands(&batch);
+            if !pending_commands.is_empty() {
+                let _ = event_sender.send(ServerEvent::commands(
+                    request_id.clone(),
+                    AnalysisPhase::Pending,
+                    pending_commands,
+                ));
+            }
+
+            let final_sender = event_sender.clone();
+            tokio::spawn(async move {
+                let commands =
+                    sites::analyze_dom(&batch, &state.ai_analyzer, &state.content_store).await;
+                let _ = final_sender.send(ServerEvent::commands(
+                    request_id,
+                    AnalysisPhase::Final,
+                    commands,
+                ));
+            });
+        }
+    }
 }
 
 fn log_dom_batch(batch: &DomAnalysisBatch) {
@@ -94,6 +188,45 @@ fn now_unix_ms() -> u128 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis()
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+enum ClientEvent {
+    AnalyzeDom {
+        #[serde(rename = "requestId")]
+        request_id: String,
+        page: crate::core::PageSnapshot,
+        #[serde(default)]
+        elements: Vec<crate::core::DomElementSnapshot>,
+    },
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ServerEvent {
+    r#type: &'static str,
+    request_id: String,
+    phase: AnalysisPhase,
+    commands: Vec<DomCommand>,
+}
+
+impl ServerEvent {
+    fn commands(request_id: String, phase: AnalysisPhase, commands: Vec<DomCommand>) -> Self {
+        Self {
+            r#type: "commands",
+            request_id,
+            phase,
+            commands,
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+enum AnalysisPhase {
+    Pending,
+    Final,
 }
 
 /// Response for the DOM snapshot analysis endpoint.

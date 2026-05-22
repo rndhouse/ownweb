@@ -6,7 +6,9 @@
   "permissions": ["storage"],
   "host_permissions": [
     "http://127.0.0.1/*",
-    "http://localhost/*"
+    "http://localhost/*",
+    "ws://127.0.0.1/*",
+    "ws://localhost/*"
   ],
   "background": {
     "service_worker": "background.js"

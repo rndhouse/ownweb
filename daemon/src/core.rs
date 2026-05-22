@@ -271,6 +271,18 @@ impl DomCommand {
             confidence: decision.confidence,
         }
     }
+
+    /// Builds a command that gates content while daemon analysis is still running.
+    pub fn checking(target: DomCommandTarget) -> Self {
+        Self {
+            action: DomCommandAction::Dim,
+            target,
+            label: Some("OwnWeb: checking".into()),
+            text: None,
+            reason: Some("Waiting for local analysis".into()),
+            confidence: None,
+        }
+    }
 }
 
 /// Browser-side DOM operation names.

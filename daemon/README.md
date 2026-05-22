@@ -88,12 +88,15 @@ OWNWEB_X_REVIEW_ALL=0 cargo run
 ## Endpoints
 
 - `GET /health`
+- `GET /v1/events`
 - `POST /v1/dom/analyze`
 
-`/v1/dom/analyze` is the generic browser contract. The extension sends page
-metadata plus candidate DOM region snapshots. The daemon dispatches by page
-URL, interprets site-specific structures, stores normalized content, and
-returns DOM commands for the extension to apply.
+`/v1/events` is the primary extension path. The extension opens a WebSocket,
+sends DOM analysis events, receives immediate `pending` commands that gate
+identified posts, then receives `final` commands after local analysis finishes.
+
+`/v1/dom/analyze` is the REST smoke-test path. It accepts the same DOM snapshot
+shape and returns final DOM commands in one response.
 
 Request shape:
 
@@ -145,6 +148,32 @@ Response shape:
       "confidence": 0.8
     }
   ]
+}
+```
+
+WebSocket request shape:
+
+```json
+{
+  "type": "analyzeDom",
+  "requestId": "dom:1",
+  "page": {
+    "url": "https://x.com/home",
+    "title": "X",
+    "capturedAt": "2026-05-22T10:00:00.000Z"
+  },
+  "elements": []
+}
+```
+
+WebSocket command event shape:
+
+```json
+{
+  "type": "commands",
+  "requestId": "dom:1",
+  "phase": "pending",
+  "commands": []
 }
 ```
 

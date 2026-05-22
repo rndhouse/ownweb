@@ -1,14 +1,23 @@
 const DEFAULT_DAEMON_ORIGIN = "http://127.0.0.1:17891";
 const ANALYZE_PATH = "/v1/dom/analyze";
+const EVENTS_PATH = "/v1/events";
 const REQUEST_TIMEOUT_MS = 20000;
 const MAX_ELEMENTS_PER_REQUEST = 16;
+const REQUEST_GC_MS = 60000;
 
-chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+let socket = null;
+let socketOrigin = null;
+let socketPromise = null;
+let nextRequestId = 1;
+
+const pendingRequests = new Map();
+
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!message || message.type !== "ownweb:analyzeDom") {
     return false;
   }
 
-  analyzeDom(message)
+  analyzeDom(message, sender)
     .then((commands) => sendResponse({ ok: true, commands }))
     .catch((error) => {
       sendResponse({
@@ -20,7 +29,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   return true;
 });
 
-async function analyzeDom(message) {
+async function analyzeDom(message, sender) {
   const elements = Array.isArray(message.elements)
     ? message.elements.slice(0, MAX_ELEMENTS_PER_REQUEST).map(normalizeElement)
     : [];
@@ -29,16 +38,145 @@ async function analyzeDom(message) {
   }
 
   const settings = await getSettings();
-  const response = await postJson(settings.daemonOrigin, ANALYZE_PATH, {
-    page: normalizePage(message.page),
-    elements
-  });
+  const page = normalizePage(message.page);
+  const tabId = sender && sender.tab && Number.isInteger(sender.tab.id) ? sender.tab.id : null;
+
+  if (tabId !== null) {
+    try {
+      await sendAnalyzeDomOverSocket(settings.daemonOrigin, tabId, { page, elements });
+      return [];
+    } catch (_error) {
+      // Fall through to REST so a disconnected WebSocket does not block development.
+    }
+  }
+
+  return analyzeDomOverRest(settings.daemonOrigin, { page, elements });
+}
+
+async function sendAnalyzeDomOverSocket(origin, tabId, body) {
+  const ws = await ensureSocket(origin);
+  const requestId = nextRequestIdString();
+  const timeoutId = setTimeout(() => {
+    pendingRequests.delete(requestId);
+  }, REQUEST_GC_MS);
+
+  pendingRequests.set(requestId, { tabId, timeoutId });
+  ws.send(
+    JSON.stringify({
+      type: "analyzeDom",
+      requestId,
+      page: body.page,
+      elements: body.elements
+    })
+  );
+}
+
+async function analyzeDomOverRest(origin, body) {
+  const response = await postJson(origin, ANALYZE_PATH, body);
 
   if (!Array.isArray(response.commands)) {
     throw new Error("Daemon response must include a commands array.");
   }
 
   return response.commands.map(normalizeCommand);
+}
+
+function ensureSocket(origin) {
+  const wsOrigin = websocketOrigin(origin);
+  if (socket && socket.readyState === WebSocket.OPEN && socketOrigin === wsOrigin) {
+    return Promise.resolve(socket);
+  }
+
+  if (socketPromise && socketOrigin === wsOrigin) {
+    return socketPromise;
+  }
+
+  closeSocket();
+  socketOrigin = wsOrigin;
+  socketPromise = new Promise((resolve, reject) => {
+    const ws = new WebSocket(`${wsOrigin}${EVENTS_PATH}`);
+    let settled = false;
+
+    ws.addEventListener("open", () => {
+      socket = ws;
+      settled = true;
+      socketPromise = null;
+      resolve(ws);
+    });
+
+    ws.addEventListener("message", (event) => {
+      handleSocketMessage(event.data);
+    });
+
+    ws.addEventListener("close", () => {
+      if (socket === ws) {
+        socket = null;
+      }
+      if (!settled) {
+        socketPromise = null;
+        reject(new Error("Daemon WebSocket closed before opening."));
+      }
+    });
+
+    ws.addEventListener("error", () => {
+      if (!settled) {
+        socketPromise = null;
+        reject(new Error("Daemon WebSocket failed to open."));
+      }
+    });
+  });
+
+  return socketPromise;
+}
+
+function closeSocket() {
+  if (socket) {
+    socket.close();
+    socket = null;
+  }
+  socketPromise = null;
+}
+
+function handleSocketMessage(data) {
+  let event;
+  try {
+    event = JSON.parse(String(data || ""));
+  } catch (_error) {
+    return;
+  }
+
+  if (!event || event.type !== "commands") {
+    return;
+  }
+
+  const requestId = stringOrEmpty(event.requestId);
+  const pendingRequest = pendingRequests.get(requestId);
+  if (!pendingRequest) {
+    return;
+  }
+
+  if (event.phase === "final") {
+    clearTimeout(pendingRequest.timeoutId);
+    pendingRequests.delete(requestId);
+  }
+
+  const commands = Array.isArray(event.commands)
+    ? event.commands.map(normalizeCommand)
+    : [];
+  if (commands.length === 0) {
+    return;
+  }
+
+  chrome.tabs.sendMessage(
+    pendingRequest.tabId,
+    {
+      type: "ownweb:applyCommands",
+      commands
+    },
+    () => {
+      chrome.runtime.lastError;
+    }
+  );
 }
 
 function normalizePage(page) {
@@ -152,6 +290,18 @@ function normalizeOrigin(value) {
   } catch (_error) {
     return DEFAULT_DAEMON_ORIGIN;
   }
+}
+
+function websocketOrigin(origin) {
+  const url = new URL(normalizeOrigin(origin));
+  url.protocol = "ws:";
+  return url.origin;
+}
+
+function nextRequestIdString() {
+  const requestId = `dom:${Date.now()}:${nextRequestId}`;
+  nextRequestId += 1;
+  return requestId;
 }
 
 function stringOrEmpty(value) {
