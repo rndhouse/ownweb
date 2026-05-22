@@ -10,6 +10,8 @@ use tracing::info;
 use tracing_subscriber::EnvFilter;
 
 const DEFAULT_BIND_ADDR: &str = "127.0.0.1:17891";
+const BIND_ADDR_ENV: &str = "OWNWEB_BIND_ADDR";
+const LEGACY_BIND_ADDR_ENV: &str = "PAIRPILOT_BIND_ADDR";
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -21,15 +23,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .init();
 
     let bind_addr =
-        std::env::var("PAIRPILOT_BIND_ADDR").unwrap_or_else(|_| DEFAULT_BIND_ADDR.into());
+        env_var(BIND_ADDR_ENV, LEGACY_BIND_ADDR_ENV).unwrap_or_else(|| DEFAULT_BIND_ADDR.into());
     let addr: SocketAddr = bind_addr.parse()?;
 
     let listener = TcpListener::bind(addr).await?;
-    info!(%addr, "pairpilot-daemon listening");
+    info!(%addr, "ownweb-daemon listening");
     if api::captured_content_logging_enabled() {
-        info!("pairpilot-daemon captured content logging enabled");
+        info!("ownweb-daemon captured content logging enabled");
     } else {
-        info!("pairpilot-daemon captured content logging disabled");
+        info!("ownweb-daemon captured content logging disabled");
     }
 
     axum::serve(listener, api::router()?)
@@ -37,6 +39,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .await?;
 
     Ok(())
+}
+
+fn env_var(name: &str, legacy_name: &str) -> Option<String> {
+    std::env::var(name)
+        .ok()
+        .or_else(|| std::env::var(legacy_name).ok())
 }
 
 async fn shutdown_signal() {

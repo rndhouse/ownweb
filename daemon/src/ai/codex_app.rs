@@ -17,6 +17,16 @@ const DEFAULT_WS_URL: &str = "ws://127.0.0.1:39177";
 const DEFAULT_MODEL: &str = "gpt-5.3-codex-spark";
 const DEFAULT_EFFORT: &str = "low";
 const DEFAULT_TIMEOUT_MS: u64 = 8000;
+const WS_ENV: &str = "OWNWEB_CODEX_APP_WS";
+const LEGACY_WS_ENV: &str = "PAIRPILOT_CODEX_APP_WS";
+const MODEL_ENV: &str = "OWNWEB_CODEX_MODEL";
+const LEGACY_MODEL_ENV: &str = "PAIRPILOT_CODEX_MODEL";
+const EFFORT_ENV: &str = "OWNWEB_CODEX_EFFORT";
+const LEGACY_EFFORT_ENV: &str = "PAIRPILOT_CODEX_EFFORT";
+const TIMEOUT_ENV: &str = "OWNWEB_CODEX_TIMEOUT_MS";
+const LEGACY_TIMEOUT_ENV: &str = "PAIRPILOT_CODEX_TIMEOUT_MS";
+const CWD_ENV: &str = "OWNWEB_CODEX_CWD";
+const LEGACY_CWD_ENV: &str = "PAIRPILOT_CODEX_CWD";
 
 /// Codex app-server analyzer backed by one local app-server process.
 pub struct CodexAppAnalyzer {
@@ -184,16 +194,14 @@ struct CodexAppConfig {
 
 impl CodexAppConfig {
     fn from_env() -> Self {
-        let ws_url =
-            std::env::var("PAIRPILOT_CODEX_APP_WS").unwrap_or_else(|_| DEFAULT_WS_URL.into());
-        let model = std::env::var("PAIRPILOT_CODEX_MODEL").unwrap_or_else(|_| DEFAULT_MODEL.into());
+        let ws_url = env_var(WS_ENV, LEGACY_WS_ENV).unwrap_or_else(|| DEFAULT_WS_URL.into());
+        let model = env_var(MODEL_ENV, LEGACY_MODEL_ENV).unwrap_or_else(|| DEFAULT_MODEL.into());
         let effort =
-            std::env::var("PAIRPILOT_CODEX_EFFORT").unwrap_or_else(|_| DEFAULT_EFFORT.into());
-        let timeout_ms = std::env::var("PAIRPILOT_CODEX_TIMEOUT_MS")
-            .ok()
+            env_var(EFFORT_ENV, LEGACY_EFFORT_ENV).unwrap_or_else(|| DEFAULT_EFFORT.into());
+        let timeout_ms = env_var(TIMEOUT_ENV, LEGACY_TIMEOUT_ENV)
             .and_then(|value| value.parse().ok())
             .unwrap_or(DEFAULT_TIMEOUT_MS);
-        let cwd = std::env::var("PAIRPILOT_CODEX_CWD").unwrap_or_else(|_| {
+        let cwd = env_var(CWD_ENV, LEGACY_CWD_ENV).unwrap_or_else(|| {
             Path::new(env!("CARGO_MANIFEST_DIR"))
                 .parent()
                 .unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")))
@@ -209,6 +217,12 @@ impl CodexAppConfig {
             cwd,
         }
     }
+}
+
+fn env_var(name: &str, legacy_name: &str) -> Option<String> {
+    std::env::var(name)
+        .ok()
+        .or_else(|| std::env::var(legacy_name).ok())
 }
 
 #[derive(Default)]
@@ -230,8 +244,8 @@ impl CodexAppSession {
             "initialize",
             json!({
                 "clientInfo": {
-                    "name": "pairpilot-daemon",
-                    "title": "Pairpilot Daemon",
+                    "name": "ownweb-daemon",
+                    "title": "OwnWeb Daemon",
                     "version": env!("CARGO_PKG_VERSION")
                 },
                 "capabilities": {
@@ -259,7 +273,7 @@ impl CodexAppSession {
                     "sandbox": "read-only",
                     "model": config.model,
                     "serviceTier": null,
-                    "baseInstructions": "You summarize X/Twitter posts for Pairpilot. Return only the requested JSON.",
+                    "baseInstructions": "You summarize X/Twitter posts for OwnWeb. Return only the requested JSON.",
                     "developerInstructions": "Return concise valid JSON. Do not use tools. Do not run commands. Keep each summary under 120 characters.",
                     "ephemeral": true,
                     "experimentalRawEvents": false,

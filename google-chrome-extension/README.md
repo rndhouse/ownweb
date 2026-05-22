@@ -1,6 +1,6 @@
-# Pairpilot X Filter
+# OwnWeb X Filter
 
-Chrome Manifest V3 extension that scans visible X/Twitter posts, sends post content to a local Pairpilot daemon, and applies the daemon's returned action.
+Chrome Manifest V3 extension that scans visible X/Twitter posts, sends post content to a local OwnWeb daemon, and applies the daemon's returned action.
 
 ## Load in Chrome
 
@@ -44,7 +44,7 @@ Response shape:
     {
       "clientId": "x:123:1",
       "action": "hide",
-      "label": "Pairpilot: spam",
+      "label": "OwnWeb: spam",
       "reason": "Promotional spam",
       "replacementText": null,
       "confidence": 0.91

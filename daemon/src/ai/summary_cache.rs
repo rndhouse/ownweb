@@ -7,8 +7,10 @@ use tracing::debug;
 
 const DEFAULT_MAX_ENTRIES: usize = 10_000;
 const DEFAULT_TTL_SECS: u64 = 24 * 60 * 60;
-const MAX_ENTRIES_ENV: &str = "PAIRPILOT_X_SUMMARY_CACHE_MAX_ENTRIES";
-const TTL_SECS_ENV: &str = "PAIRPILOT_X_SUMMARY_CACHE_TTL_SECS";
+const MAX_ENTRIES_ENV: &str = "OWNWEB_X_SUMMARY_CACHE_MAX_ENTRIES";
+const LEGACY_MAX_ENTRIES_ENV: &str = "PAIRPILOT_X_SUMMARY_CACHE_MAX_ENTRIES";
+const TTL_SECS_ENV: &str = "OWNWEB_X_SUMMARY_CACHE_TTL_SECS";
+const LEGACY_TTL_SECS_ENV: &str = "PAIRPILOT_X_SUMMARY_CACHE_TTL_SECS";
 
 /// In-memory cache for X post summaries returned by Codex.
 #[derive(Debug)]
@@ -22,8 +24,8 @@ impl SummaryCache {
     /// Builds a summary cache from local daemon environment variables.
     pub fn from_env() -> Self {
         Self::new(
-            env_usize_default(MAX_ENTRIES_ENV, DEFAULT_MAX_ENTRIES),
-            env_duration_secs_default(TTL_SECS_ENV, DEFAULT_TTL_SECS),
+            env_usize_default(MAX_ENTRIES_ENV, LEGACY_MAX_ENTRIES_ENV, DEFAULT_MAX_ENTRIES),
+            env_duration_secs_default(TTL_SECS_ENV, LEGACY_TTL_SECS_ENV, DEFAULT_TTL_SECS),
         )
     }
 
@@ -52,7 +54,7 @@ impl SummaryCache {
         entry.last_used = now;
 
         debug!(
-            target: "pairpilot_daemon::summary_cache",
+            target: "ownweb_daemon::summary_cache",
             client_id = %item.client_id,
             content_id = item.content_id.as_deref(),
             cache_key = %key,
@@ -208,17 +210,19 @@ fn stable_hash(text: &str) -> u64 {
     hash
 }
 
-fn env_usize_default(name: &str, default: usize) -> usize {
+fn env_usize_default(name: &str, legacy_name: &str, default: usize) -> usize {
     std::env::var(name)
+        .or_else(|_| std::env::var(legacy_name))
         .ok()
         .and_then(|value| value.parse().ok())
         .filter(|value| *value > 0)
         .unwrap_or(default)
 }
 
-fn env_duration_secs_default(name: &str, default_secs: u64) -> Duration {
+fn env_duration_secs_default(name: &str, legacy_name: &str, default_secs: u64) -> Duration {
     Duration::from_secs(
         std::env::var(name)
+            .or_else(|_| std::env::var(legacy_name))
             .ok()
             .and_then(|value| value.parse().ok())
             .filter(|value| *value > 0)

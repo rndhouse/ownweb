@@ -1,18 +1,18 @@
-.pairpilot-hidden {
+.ownweb-hidden {
   display: none !important;
 }
 
-.pairpilot-dimmed {
+.ownweb-dimmed {
   opacity: 0.38 !important;
   transition: opacity 160ms ease;
 }
 
-.pairpilot-dimmed:hover,
-.pairpilot-dimmed:focus-within {
+.ownweb-dimmed:hover,
+.ownweb-dimmed:focus-within {
   opacity: 0.86 !important;
 }
 
-.pairpilot-badge {
+.ownweb-badge {
   display: inline-flex;
   align-items: center;
   max-width: calc(100% - 32px);
@@ -26,6 +26,6 @@
   overflow-wrap: anywhere;
 }
 
-.pairpilot-replaced [data-testid="tweetText"] {
+.ownweb-replaced [data-testid="tweetText"] {
   color: #536471 !important;
 }

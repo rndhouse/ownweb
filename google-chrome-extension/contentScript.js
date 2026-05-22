@@ -44,12 +44,12 @@ function scanForTweets() {
     }
 
     const signature = postSignature(post.url, post.text);
-    if (article.dataset.pairpilotSignature === signature) {
+    if (article.dataset.ownwebSignature === signature) {
       continue;
     }
 
-    article.dataset.pairpilotSignature = signature;
-    article.dataset.pairpilotState = "queued";
+    article.dataset.ownwebSignature = signature;
+    article.dataset.ownwebState = "queued";
     elementsByClientId.set(post.clientId, article);
     queuedPosts.push(post);
   }
@@ -135,12 +135,12 @@ async function flushQueue() {
     for (const post of batch) {
       const element = elementsByClientId.get(post.clientId);
       if (element) {
-        element.dataset.pairpilotState = "pending";
+        element.dataset.ownwebState = "pending";
       }
     }
 
     const response = await sendMessage({
-      type: "pairpilot:analyzePosts",
+      type: "ownweb:analyzePosts",
       posts: batch
     });
 
@@ -180,16 +180,16 @@ function applyDecisions(decisions) {
       continue;
     }
 
-    clearPairpilotChanges(article);
-    article.dataset.pairpilotState = decision.action || "keep";
+    clearOwnWebChanges(article);
+    article.dataset.ownwebState = decision.action || "keep";
 
     if (decision.action === "hide") {
-      article.classList.add("pairpilot-hidden");
+      article.classList.add("ownweb-hidden");
       continue;
     }
 
     if (decision.action === "dim") {
-      article.classList.add("pairpilot-dimmed");
+      article.classList.add("ownweb-dimmed");
       insertBadge(article, decision);
       continue;
     }
@@ -206,18 +206,18 @@ function applyDecisions(decisions) {
   }
 }
 
-function clearPairpilotChanges(article) {
-  article.classList.remove("pairpilot-hidden", "pairpilot-dimmed", "pairpilot-replaced");
+function clearOwnWebChanges(article) {
+  article.classList.remove("ownweb-hidden", "ownweb-dimmed", "ownweb-replaced");
 
-  const badge = article.querySelector(":scope > .pairpilot-badge");
+  const badge = article.querySelector(":scope > .ownweb-badge");
   if (badge) {
     badge.remove();
   }
 
   const textElement = article.querySelector(TWEET_TEXT_SELECTOR);
-  if (textElement && textElement.dataset.pairpilotOriginalText) {
-    textElement.innerText = textElement.dataset.pairpilotOriginalText;
-    delete textElement.dataset.pairpilotOriginalText;
+  if (textElement && textElement.dataset.ownwebOriginalText) {
+    textElement.innerText = textElement.dataset.ownwebOriginalText;
+    delete textElement.dataset.ownwebOriginalText;
   }
 }
 
@@ -227,13 +227,13 @@ function replaceTweetText(article, replacementText) {
     return;
   }
 
-  textElement.dataset.pairpilotOriginalText = textElement.innerText;
+  textElement.dataset.ownwebOriginalText = textElement.innerText;
   textElement.innerText = replacementText;
-  article.dataset.pairpilotSignature = postSignature(
+  article.dataset.ownwebSignature = postSignature(
     currentPostUrl(article),
     normalizeText(replacementText)
   );
-  article.classList.add("pairpilot-replaced");
+  article.classList.add("ownweb-replaced");
 }
 
 function currentPostUrl(article) {
@@ -244,7 +244,7 @@ function currentPostUrl(article) {
 
 function insertBadge(article, decision) {
   const badge = document.createElement("div");
-  badge.className = "pairpilot-badge";
+  badge.className = "ownweb-badge";
   badge.textContent = badgeText(decision);
   article.prepend(badge);
 }
@@ -255,10 +255,10 @@ function badgeText(decision) {
   }
 
   if (decision.reason) {
-    return `Pairpilot: ${decision.reason}`;
+    return `OwnWeb: ${decision.reason}`;
   }
 
-  return "Pairpilot filtered this post";
+  return "OwnWeb filtered this post";
 }
 
 function markBatchUnavailable(batch, error) {
@@ -268,8 +268,8 @@ function markBatchUnavailable(batch, error) {
       continue;
     }
 
-    article.dataset.pairpilotState = "unavailable";
-    article.title = `Pairpilot daemon unavailable: ${
+    article.dataset.ownwebState = "unavailable";
+    article.title = `OwnWeb daemon unavailable: ${
       error instanceof Error ? error.message : String(error)
     }`;
   }

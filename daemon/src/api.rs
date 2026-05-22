@@ -15,7 +15,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tower_http::cors::{Any, CorsLayer};
 use tracing::{info, warn};
 
-const LOG_CAPTURED_CONTENT_ENV: &str = "PAIRPILOT_LOG_CAPTURED_CONTENT";
+const LOG_CAPTURED_CONTENT_ENV: &str = "OWNWEB_LOG_CAPTURED_CONTENT";
+const LEGACY_LOG_CAPTURED_CONTENT_ENV: &str = "PAIRPILOT_LOG_CAPTURED_CONTENT";
 
 /// Builds the daemon HTTP router.
 pub fn router() -> Result<Router, StorageError> {
@@ -35,7 +36,11 @@ pub fn router() -> Result<Router, StorageError> {
 
 /// Returns whether captured content should be emitted as structured log events.
 pub fn captured_content_logging_enabled() -> bool {
-    env_flag_default(LOG_CAPTURED_CONTENT_ENV, false)
+    env_flag_default(
+        LOG_CAPTURED_CONTENT_ENV,
+        LEGACY_LOG_CAPTURED_CONTENT_ENV,
+        false,
+    )
 }
 
 fn cors_layer() -> CorsLayer {
@@ -49,7 +54,7 @@ fn cors_layer() -> CorsLayer {
 async fn health() -> Json<HealthResponse> {
     Json(HealthResponse {
         ok: true,
-        service: "pairpilot-daemon",
+        service: "ownweb-daemon",
     })
 }
 
@@ -105,7 +110,7 @@ fn log_captured_batch(batch: &AnalysisBatch) {
         match serde_json::to_string(&captured_item) {
             Ok(captured_json) => {
                 info!(
-                    target: "pairpilot_daemon::captured_content",
+                    target: "ownweb_daemon::captured_content",
                     source = batch.source.as_str(),
                     client_id = item.client_id.as_str(),
                     content_id = item.content_id.as_deref(),
@@ -243,8 +248,9 @@ struct AppState {
     log_captured_content: bool,
 }
 
-fn env_flag_default(name: &str, default: bool) -> bool {
+fn env_flag_default(name: &str, legacy_name: &str, default: bool) -> bool {
     std::env::var(name)
+        .or_else(|_| std::env::var(legacy_name))
         .map(|value| value != "0" && !value.eq_ignore_ascii_case("false"))
         .unwrap_or(default)
 }

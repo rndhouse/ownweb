@@ -9,7 +9,8 @@ use std::{
 };
 use tracing::{debug, info};
 
-const DATA_DIR_ENV: &str = "PAIRPILOT_DATA_DIR";
+const DATA_DIR_ENV: &str = "OWNWEB_DATA_DIR";
+const LEGACY_DATA_DIR_ENV: &str = "PAIRPILOT_DATA_DIR";
 const X_SITE_DIR: &str = "x.com";
 const DB_FILE_NAME: &str = "db.sqlite";
 
@@ -159,7 +160,7 @@ impl WebsiteDb {
         transaction.commit()?;
 
         debug!(
-            target: "pairpilot_daemon::storage",
+            target: "ownweb_daemon::storage",
             source = batch.source.as_str(),
             stored_count,
             skipped_count,
@@ -283,9 +284,12 @@ fn data_dir_from_env() -> Result<PathBuf> {
     if let Some(path) = non_empty_env(DATA_DIR_ENV) {
         return Ok(PathBuf::from(path));
     }
+    if let Some(path) = non_empty_env(LEGACY_DATA_DIR_ENV) {
+        return Ok(PathBuf::from(path));
+    }
 
     if let Some(home) = non_empty_env("HOME") {
-        return Ok(PathBuf::from(home).join(".local/share/pairpilot"));
+        return Ok(PathBuf::from(home).join(".local/share/ownweb"));
     }
 
     Err(StorageError::MissingDataDir)
@@ -343,8 +347,8 @@ type Result<T> = std::result::Result<T, StorageError>;
 /// Error returned by the filesystem-backed content store.
 #[derive(Debug)]
 pub enum StorageError {
-    /// No data directory could be determined from `PAIRPILOT_DATA_DIR`,
-    /// or `HOME`.
+    /// No data directory could be determined from `OWNWEB_DATA_DIR`,
+    /// legacy `PAIRPILOT_DATA_DIR`, or `HOME`.
     MissingDataDir,
     /// Filesystem setup failed.
     Io(std::io::Error),
@@ -359,7 +363,7 @@ impl fmt::Display for StorageError {
         match self {
             Self::MissingDataDir => write!(
                 formatter,
-                "missing data directory; set PAIRPILOT_DATA_DIR or HOME"
+                "missing data directory; set OWNWEB_DATA_DIR, PAIRPILOT_DATA_DIR, or HOME"
             ),
             Self::Io(error) => write!(formatter, "filesystem error: {error}"),
             Self::Sqlite(error) => write!(formatter, "sqlite error: {error}"),
@@ -411,10 +415,8 @@ mod tests {
     }
 
     fn temp_data_dir(name: &str) -> PathBuf {
-        let path = std::env::temp_dir().join(format!(
-            "pairpilot-storage-test-{name}-{}",
-            std::process::id()
-        ));
+        let path =
+            std::env::temp_dir().join(format!("ownweb-storage-test-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&path);
         path
     }

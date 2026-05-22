@@ -42,11 +42,12 @@ const REVIEW_TERMS: &[&str] = &[
     "patreon",
 ];
 
-const REVIEW_ALL_ENV: &str = "PAIRPILOT_X_REVIEW_ALL";
+const REVIEW_ALL_ENV: &str = "OWNWEB_X_REVIEW_ALL";
+const LEGACY_REVIEW_ALL_ENV: &str = "PAIRPILOT_X_REVIEW_ALL";
 
 /// Analyzes X/Twitter timeline content.
 pub async fn analyze(items: &[ContentItem], ai_analyzer: &AiAnalyzer) -> Vec<ContentDecision> {
-    let review_all = env_flag_default(REVIEW_ALL_ENV, true);
+    let review_all = env_flag_default(REVIEW_ALL_ENV, LEGACY_REVIEW_ALL_ENV, true);
     let ai_items: Vec<_> = items
         .iter()
         .filter(|item| should_ask_codex(item, review_all))
@@ -106,7 +107,7 @@ fn classify_item(item: &ContentItem) -> ContentDecision {
     if spam_hits >= 2 {
         return ContentDecision::hide(
             item.client_id.clone(),
-            "Pairpilot: spam",
+            "OwnWeb: spam",
             "Matched promotional spam heuristics",
             0.9,
         );
@@ -115,7 +116,7 @@ fn classify_item(item: &ContentItem) -> ContentDecision {
     if ai_hits >= 2 {
         return ContentDecision::dim(
             item.client_id.clone(),
-            "Pairpilot: likely generated",
+            "OwnWeb: likely generated",
             "Matched generated-writing heuristics",
             0.72,
         );
@@ -164,8 +165,9 @@ fn count_matches(text: &str, terms: &[&str]) -> usize {
     terms.iter().filter(|term| text.contains(**term)).count()
 }
 
-fn env_flag_default(name: &str, default: bool) -> bool {
+fn env_flag_default(name: &str, legacy_name: &str, default: bool) -> bool {
     std::env::var(name)
+        .or_else(|_| std::env::var(legacy_name))
         .map(|value| value != "0" && !value.eq_ignore_ascii_case("false"))
         .unwrap_or(default)
 }

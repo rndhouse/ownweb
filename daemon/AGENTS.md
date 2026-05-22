@@ -15,10 +15,10 @@
 ## Runtime Policy
 
 - Keep classification and filtering policy in the daemon.
-- Preserve stdout JSONL logging for captured posts unless the task explicitly changes logging behavior.
-- Keep startup and diagnostic messages on stderr so stdout remains machine-readable.
+- Route daemon output through structured `tracing` logs on stdout.
+- Keep captured-content logging opt-in through `OWNWEB_LOG_CAPTURED_CONTENT`.
 - Bind to `127.0.0.1:17891` by default.
-- Use `PAIRPILOT_BIND_ADDR` for alternate local test ports.
+- Use `OWNWEB_BIND_ADDR` for alternate local test ports.
 
 ## Rust Policy
 

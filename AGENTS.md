@@ -1,4 +1,4 @@
-# Pairpilot Agent Instructions
+# OwnWeb Agent Instructions
 
 ## Scope and Precedence
 

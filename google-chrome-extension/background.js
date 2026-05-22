@@ -4,7 +4,7 @@ const REQUEST_TIMEOUT_MS = 20000;
 const MAX_POSTS_PER_REQUEST = 8;
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-  if (!message || message.type !== "pairpilot:analyzePosts") {
+  if (!message || message.type !== "ownweb:analyzePosts") {
     return false;
   }
 

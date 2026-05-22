@@ -1,4 +1,4 @@
-# Pairpilot Daemon
+# OwnWeb Daemon
 
 Local REST service for the Chrome extension.
 
@@ -11,7 +11,7 @@ cargo run
 The daemon binds to `127.0.0.1:17891` by default. Override it with:
 
 ```sh
-PAIRPILOT_BIND_ADDR=127.0.0.1:19000 cargo run
+OWNWEB_BIND_ADDR=127.0.0.1:19000 cargo run
 ```
 
 Daemon output goes through structured logs on stdout. The default log level is
@@ -20,17 +20,17 @@ Daemon output goes through structured logs on stdout. The default log level is
 Incoming posts are not logged by default. To enable captured-content log events:
 
 ```sh
-PAIRPILOT_LOG_CAPTURED_CONTENT=1 cargo run
+OWNWEB_LOG_CAPTURED_CONTENT=1 cargo run
 ```
 
 Encountered site content is stored in per-site SQLite databases under the local
-Pairpilot data directory. X posts are stored at:
+OwnWeb data directory. X posts are stored at:
 
 ```text
-~/.local/share/pairpilot/x.com/db.sqlite
+~/.local/share/ownweb/x.com/db.sqlite
 ```
 
-Override the root data directory with `PAIRPILOT_DATA_DIR`. The daemon uses
+Override the root data directory with `OWNWEB_DATA_DIR`. The daemon uses
 bundled SQLite through Rust dependencies, so no separate SQLite service or
 system install is required.
 
@@ -55,24 +55,27 @@ cargo run
 Useful environment variables:
 
 ```sh
-PAIRPILOT_CODEX_APP_ENABLED=0
-PAIRPILOT_CODEX_APP_WS=ws://127.0.0.1:39177
-PAIRPILOT_CODEX_MODEL=gpt-5.3-codex-spark
-PAIRPILOT_CODEX_EFFORT=low
-PAIRPILOT_CODEX_TIMEOUT_MS=8000
-PAIRPILOT_CODEX_CWD=/home/user/dev/pairpilot/public
-PAIRPILOT_DATA_DIR=/home/user/.local/share/pairpilot
-PAIRPILOT_LOG_CAPTURED_CONTENT=0
-PAIRPILOT_X_SUMMARY_CACHE_MAX_ENTRIES=10000
-PAIRPILOT_X_SUMMARY_CACHE_TTL_SECS=86400
+OWNWEB_CODEX_APP_ENABLED=0
+OWNWEB_CODEX_APP_WS=ws://127.0.0.1:39177
+OWNWEB_CODEX_MODEL=gpt-5.3-codex-spark
+OWNWEB_CODEX_EFFORT=low
+OWNWEB_CODEX_TIMEOUT_MS=8000
+OWNWEB_CODEX_CWD=/home/user/dev/ownweb/public
+OWNWEB_DATA_DIR=/home/user/.local/share/ownweb
+OWNWEB_LOG_CAPTURED_CONTENT=0
+OWNWEB_X_SUMMARY_CACHE_MAX_ENTRIES=10000
+OWNWEB_X_SUMMARY_CACHE_TTL_SECS=86400
 RUST_LOG=debug
 ```
+
+Legacy `PAIRPILOT_*` environment variables are still accepted as fallbacks
+during the rename.
 
 To restore the faster filtered mode later, only send suspicious or
 promotion-like posts through Codex:
 
 ```sh
-PAIRPILOT_X_REVIEW_ALL=0 cargo run
+OWNWEB_X_REVIEW_ALL=0 cargo run
 ```
 
 ## Endpoints
