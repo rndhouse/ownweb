@@ -89,6 +89,24 @@ pub struct XDislikedPost {
     pub latest_captured_at: Option<String>,
 }
 
+/// Aggregate counts for content stored under one site scope.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ContentStats {
+    /// Logical content kind for these counts.
+    pub content_kind: String,
+    /// Number of unique stored content rows.
+    pub unique_items: usize,
+    /// Total number of captured encounters across stored rows.
+    pub total_encounters: usize,
+    /// Number of rows with a stable source content ID.
+    pub items_with_stable_id: usize,
+    /// Earliest time any row in this scope was first seen.
+    pub first_seen_at_unix_ms: Option<i64>,
+    /// Latest time any row in this scope was seen.
+    pub last_seen_at_unix_ms: Option<i64>,
+}
+
 /// Query options for listing content rules.
 #[derive(Debug, Clone)]
 pub struct RuleQuery {
@@ -234,6 +252,15 @@ impl ContentStore {
             .lock()
             .expect("X storage mutex should not be poisoned");
         db.rules(query)
+    }
+
+    /// Returns aggregate counts for stored X/Twitter content.
+    pub fn x_content_stats(&self) -> Result<ContentStats> {
+        let db = self
+            .x_com
+            .lock()
+            .expect("X storage mutex should not be poisoned");
+        db.content_stats()
     }
 }
 

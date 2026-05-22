@@ -2,7 +2,10 @@ use crate::{
     ai::AiAnalyzer,
     core::{DomAnalysisBatch, DomCommand, DomElementSnapshot, FeedbackKind, PageSnapshot},
     sites,
-    storage::{ContentRule, ContentStore, RuleQuery, StorageError, XDislikeQuery, XDislikedPost},
+    storage::{
+        ContentRule, ContentStats, ContentStore, RuleQuery, StorageError, XDislikeQuery,
+        XDislikedPost,
+    },
 };
 use axum::{
     extract::ws::{Message, WebSocket, WebSocketUpgrade},
@@ -38,6 +41,7 @@ pub fn router() -> Result<Router, StorageError> {
         .route("/v1/events", get(events_ws))
         .route("/v1/dom/analyze", post(analyze_dom))
         .route("/v1/dom/feedback", post(dom_feedback))
+        .route("/v1/content/stats", get(content_stats))
         .route("/v1/dislikes", get(dislikes))
         .route("/v1/rules", get(rules))
         .with_state(state)
@@ -130,6 +134,21 @@ async fn dislikes(
         limit: page.limit,
         offset: page.offset,
         items: page.items,
+    }))
+}
+
+async fn content_stats(
+    State(state): State<AppState>,
+    Query(query): Query<ContentStatsQuery>,
+) -> Result<Json<ContentStatsResponse>, ApiError> {
+    let site = SiteScope::from_param(query.site.as_deref())?;
+    let stats = match site {
+        SiteScope::XCom => state.content_store.x_content_stats()?,
+    };
+
+    Ok(Json(ContentStatsResponse {
+        site: site.as_str(),
+        stats,
     }))
 }
 
@@ -357,6 +376,20 @@ pub struct DomFeedbackRequest {
 pub struct DomFeedbackResponse {
     /// Commands for the extension's generic DOM executor.
     pub commands: Vec<DomCommand>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ContentStatsQuery {
+    /// Site scope for the request, such as `x.com`.
+    site: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ContentStatsResponse {
+    site: &'static str,
+    stats: ContentStats,
 }
 
 #[derive(Debug, Deserialize)]

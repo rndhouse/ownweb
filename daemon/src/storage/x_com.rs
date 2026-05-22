@@ -1,7 +1,8 @@
 use crate::{
     core::{AnalysisBatch, ContentItem, FeedbackKind},
     storage::{
-        ContentRule, RuleExamples, RulePage, RuleQuery, XDislikePage, XDislikeQuery, XDislikedPost,
+        ContentRule, ContentStats, RuleExamples, RulePage, RuleQuery, XDislikePage, XDislikeQuery,
+        XDislikedPost,
     },
 };
 use rusqlite::{params, Connection, OptionalExtension};
@@ -463,6 +464,35 @@ impl Store {
             items,
         })
     }
+
+    pub(super) fn content_stats(&self) -> super::Result<ContentStats> {
+        Ok(self.connection.query_row(
+            "
+            SELECT
+                COUNT(*),
+                COALESCE(SUM(seen_count), 0),
+                COALESCE(SUM(CASE WHEN post_id IS NOT NULL THEN 1 ELSE 0 END), 0),
+                MIN(first_seen_at_unix_ms),
+                MAX(last_seen_at_unix_ms)
+            FROM tweets
+            ",
+            [],
+            |row| {
+                let unique_items: i64 = row.get(0)?;
+                let total_encounters: i64 = row.get(1)?;
+                let items_with_stable_id: i64 = row.get(2)?;
+
+                Ok(ContentStats {
+                    content_kind: "post".into(),
+                    unique_items: unique_items.max(0) as usize,
+                    total_encounters: total_encounters.max(0) as usize,
+                    items_with_stable_id: items_with_stable_id.max(0) as usize,
+                    first_seen_at_unix_ms: row.get(3)?,
+                    last_seen_at_unix_ms: row.get(4)?,
+                })
+            },
+        )?)
+    }
 }
 
 struct StoredTweet {
@@ -817,6 +847,39 @@ mod tests {
         assert_eq!(text, "second");
         assert_eq!(seen_count, 2);
         assert_eq!(latest_client_id, "client-2");
+
+        let _ = std::fs::remove_dir_all(db_path.parent().unwrap().parent().unwrap());
+    }
+
+    #[test]
+    fn content_stats_count_unique_posts_and_encounters() {
+        let db_path = temp_db_path("content-stats");
+        let mut store = Store::open(&db_path).expect("store should open");
+
+        store
+            .record_batch(&batch(
+                "x.com",
+                vec![
+                    item("client-1", Some("123"), "first"),
+                    item("client-2", Some("456"), "second"),
+                ],
+            ))
+            .expect("first batch should store");
+        store
+            .record_batch(&batch(
+                "x.com",
+                vec![item("client-3", Some("123"), "first again")],
+            ))
+            .expect("second batch should store");
+
+        let stats = store.content_stats().expect("stats should load");
+
+        assert_eq!(stats.content_kind, "post");
+        assert_eq!(stats.unique_items, 2);
+        assert_eq!(stats.total_encounters, 3);
+        assert_eq!(stats.items_with_stable_id, 2);
+        assert!(stats.first_seen_at_unix_ms.is_some());
+        assert!(stats.last_seen_at_unix_ms.is_some());
 
         let _ = std::fs::remove_dir_all(db_path.parent().unwrap().parent().unwrap());
     }
