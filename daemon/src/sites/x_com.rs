@@ -68,7 +68,7 @@ pub async fn analyze_dom(
             .map(|extracted| extracted.item.clone())
             .collect(),
     );
-    if let Err(error) = content_store.record_batch(&content_batch) {
+    if let Err(error) = content_store.record_x_batch(&content_batch) {
         warn!(%error, "failed to store X content");
     }
 

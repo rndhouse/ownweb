@@ -139,5 +139,6 @@ Response shape:
 ```
 
 Supported command actions are `keep`, `hide`, `dim`, `insertLabel`, and
-`replaceText`. Site-specific logic lives under `src/sites/`; the extension
-stays generic and only captures DOM regions and executes commands.
+`replaceText`. Site-specific DOM interpretation lives under `src/sites/`, and
+site-specific SQLite storage lives under `src/storage/`; the extension stays
+generic and only captures DOM regions and executes commands.
