@@ -47,15 +47,15 @@ OWNWEB_X_RESET_DB=1 cargo run
 This removes `db.sqlite`, `db.sqlite-wal`, and `db.sqlite-shm` for `x.com`
 before the daemon opens storage.
 
-Codex app-server summaries are enabled by default. The daemon starts a local
+Codex app-server analysis is enabled by default. The daemon starts a local
 Codex app-server process when needed, keeps one app-server thread alive across
-requests, and asks for short X/Twitter post summaries. During development,
-every captured X post with text or a URL is sent to Codex so the daemon can
-exercise the analysis loop.
+requests, and asks it to evaluate captured X/Twitter posts against active
+content rules. During development, every captured X post with text or a URL is
+sent to Codex so the daemon can exercise the analysis loop.
 
-Summaries are cached in memory by X status ID plus a normalized text hash. This
-lets the timeline view and single-post view reuse the same AI summary when they
-capture the same post content.
+Opinions are cached in memory by X status ID, a normalized fallback key, and the
+active rule set. This lets the timeline view and single-post view reuse the same
+AI decision when they capture the same post content under the same policy.
 
 Cache hits are logged at debug level on stdout:
 
@@ -86,6 +86,7 @@ RUST_LOG=debug
 - `GET /v1/events`
 - `POST /v1/dom/analyze`
 - `POST /v1/dom/feedback`
+- `GET /v1/sites/x.com/rules`
 
 `/v1/events` is the primary extension path. The extension opens a WebSocket,
 sends DOM analysis events, receives immediate `pending` commands that gate

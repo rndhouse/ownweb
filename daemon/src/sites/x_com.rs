@@ -1,10 +1,10 @@
 use crate::{
-    ai::{AiAnalyzer, AiOpinion},
+    ai::{AiAction, AiAnalyzer, AiContentRule, AiOpinion},
     core::{
         AnalysisBatch, ContentDecision, ContentItem, DomAnalysisBatch, DomCommand,
         DomCommandTarget, DomElementSnapshot, FeedbackKind,
     },
-    storage::ContentStore,
+    storage::{ContentStore, RuleQuery},
 };
 use serde_json::json;
 use std::collections::HashMap;
@@ -24,7 +24,8 @@ pub async fn analyze_dom(
     let content_batch = content_batch_from_extracted(&extracted_items);
     record_content_batch(content_store, &content_batch);
 
-    let decisions = decide_items(&content_batch.items, ai_analyzer).await;
+    let active_rules = active_x_rules(content_store);
+    let decisions = decide_items(&content_batch.items, ai_analyzer, &active_rules).await;
     let decisions = apply_stored_feedback(content_store, &content_batch.items, decisions);
     commands_from_decisions(extracted_items, decisions)
 }
@@ -41,7 +42,8 @@ pub fn cached_dom_commands(
     }
 
     let content_batch = content_batch_from_extracted(&extracted_items);
-    let decisions = cached_decide_items(&content_batch.items, ai_analyzer)?;
+    let active_rules = active_x_rules(content_store);
+    let decisions = cached_decide_items(&content_batch.items, ai_analyzer, &active_rules)?;
     let decisions = apply_stored_feedback(content_store, &content_batch.items, decisions);
     record_content_batch(content_store, &content_batch);
 
@@ -101,7 +103,11 @@ fn record_feedback(
     }
 }
 
-async fn decide_items(items: &[ContentItem], ai_analyzer: &AiAnalyzer) -> Vec<ContentDecision> {
+async fn decide_items(
+    items: &[ContentItem],
+    ai_analyzer: &AiAnalyzer,
+    active_rules: &[AiContentRule],
+) -> Vec<ContentDecision> {
     let ai_items: Vec<_> = items
         .iter()
         .filter(|item| should_ask_codex(item))
@@ -109,7 +115,7 @@ async fn decide_items(items: &[ContentItem], ai_analyzer: &AiAnalyzer) -> Vec<Co
         .collect();
 
     if !ai_items.is_empty() {
-        if let Some(opinions) = ai_analyzer.x_opinions(&ai_items).await {
+        if let Some(opinions) = ai_analyzer.x_opinions(&ai_items, active_rules).await {
             let mut opinions_by_id: HashMap<_, _> = opinions
                 .into_iter()
                 .map(|opinion| (opinion.client_id.clone(), opinion))
@@ -183,6 +189,7 @@ fn stored_dislike_decision(
 fn cached_decide_items(
     items: &[ContentItem],
     ai_analyzer: &AiAnalyzer,
+    active_rules: &[AiContentRule],
 ) -> Option<Vec<ContentDecision>> {
     let ai_items: Vec<_> = items
         .iter()
@@ -193,7 +200,7 @@ fn cached_decide_items(
         HashMap::new()
     } else {
         ai_analyzer
-            .cached_x_opinions(&ai_items)?
+            .cached_x_opinions(&ai_items, active_rules)?
             .into_iter()
             .map(|opinion| (opinion.client_id.clone(), opinion))
             .collect()
@@ -229,8 +236,29 @@ fn record_content_batch(content_store: &ContentStore, content_batch: &AnalysisBa
     }
 }
 
+fn active_x_rules(content_store: &ContentStore) -> Vec<AiContentRule> {
+    match content_store.x_rules(RuleQuery {
+        status: Some("active".into()),
+        ..RuleQuery::default()
+    }) {
+        Ok(page) => page.items.into_iter().map(AiContentRule::from).collect(),
+        Err(error) => {
+            warn!(%error, "failed to load active X rules");
+            Vec::new()
+        }
+    }
+}
+
 fn reviewed_item_decision(opinion: AiOpinion) -> ContentDecision {
-    ContentDecision::keep(opinion.client_id)
+    match opinion.action {
+        AiAction::Keep => ContentDecision::keep(opinion.client_id),
+        AiAction::Hide => ContentDecision::hide(
+            opinion.client_id,
+            "OwnWeb: hidden by rule",
+            opinion.opinion,
+            opinion.confidence,
+        ),
+    }
 }
 
 fn extract_items(batch: &DomAnalysisBatch) -> Vec<ExtractedItem> {
@@ -644,8 +672,8 @@ mod tests {
         let ai_analyzer =
             AiAnalyzer::for_tests_with_x_summaries(&[(&cached_item, "cached summary", 0.82)]);
 
-        let decisions =
-            cached_decide_items(&[current_item], &ai_analyzer).expect("summary should be cached");
+        let decisions = cached_decide_items(&[current_item], &ai_analyzer, &[])
+            .expect("summary should be cached");
 
         assert_eq!(decisions.len(), 1);
         assert!(matches!(decisions[0].action, DecisionAction::Keep));
@@ -658,7 +686,27 @@ mod tests {
         let current_item = content_item("current", "12345", "Needs a summary");
         let ai_analyzer = AiAnalyzer::for_tests_with_x_summaries(&[]);
 
-        assert!(cached_decide_items(&[current_item], &ai_analyzer).is_none());
+        assert!(cached_decide_items(&[current_item], &ai_analyzer, &[]).is_none());
+    }
+
+    #[test]
+    fn rule_match_opinions_hide_posts() {
+        let decision = reviewed_item_decision(AiOpinion {
+            client_id: "client-1".into(),
+            action: AiAction::Hide,
+            opinion: "Matches low-value reaction rule".into(),
+            confidence: 0.91,
+            matched_rule_ids: vec!["x-engagement-bait-reaction".into()],
+        });
+
+        assert!(matches!(decision.action, DecisionAction::Hide));
+        assert_eq!(decision.client_id, "client-1");
+        assert_eq!(decision.label.as_deref(), Some("OwnWeb: hidden by rule"));
+        assert_eq!(
+            decision.reason.as_deref(),
+            Some("Matches low-value reaction rule")
+        );
+        assert_eq!(decision.confidence, Some(0.91));
     }
 
     #[test]

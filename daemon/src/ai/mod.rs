@@ -1,7 +1,7 @@
 mod codex_app;
 mod summary_cache;
 
-use crate::core::ContentItem;
+use crate::{core::ContentItem, storage::ContentRule};
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex},
@@ -32,10 +32,15 @@ impl AiAnalyzer {
     }
 
     /// Gets Codex opinions for X content.
-    pub async fn x_opinions(&self, items: &[ContentItem]) -> Option<Vec<AiOpinion>> {
+    pub async fn x_opinions(
+        &self,
+        items: &[ContentItem],
+        rules: &[AiContentRule],
+    ) -> Option<Vec<AiOpinion>> {
         let mut opinions = Vec::new();
         let mut misses = Vec::new();
         let now = Instant::now();
+        let rule_scope = rule_cache_scope(rules);
 
         {
             let mut cache = self
@@ -44,12 +49,8 @@ impl AiAnalyzer {
                 .expect("X summary cache mutex should not be poisoned");
 
             for item in items {
-                if let Some(hit) = cache.get(item, now) {
-                    opinions.push(AiOpinion {
-                        client_id: hit.client_id,
-                        opinion: hit.summary,
-                        confidence: hit.confidence,
-                    });
+                if let Some(hit) = cache.get(item, &rule_scope, now) {
+                    opinions.push(hit);
                 } else {
                     misses.push(item.clone());
                 }
@@ -63,8 +64,7 @@ impl AiAnalyzer {
         let Some(codex_app) = self.codex_app.as_ref() else {
             return (!opinions.is_empty()).then_some(opinions);
         };
-
-        match codex_app.x_opinions(&misses).await {
+        match codex_app.x_opinions(&misses, rules).await {
             Ok(fresh_opinions) => {
                 let misses_by_client_id: HashMap<_, _> = misses
                     .iter()
@@ -80,7 +80,7 @@ impl AiAnalyzer {
 
                     for opinion in &fresh_opinions {
                         if let Some(item) = misses_by_client_id.get(opinion.client_id.as_str()) {
-                            cache.insert(item, &opinion.opinion, opinion.confidence, now);
+                            cache.insert(item, &rule_scope, opinion, now);
                         }
                     }
                 }
@@ -96,8 +96,13 @@ impl AiAnalyzer {
     }
 
     /// Gets X opinions only when every requested item is already cached.
-    pub fn cached_x_opinions(&self, items: &[ContentItem]) -> Option<Vec<AiOpinion>> {
+    pub fn cached_x_opinions(
+        &self,
+        items: &[ContentItem],
+        rules: &[AiContentRule],
+    ) -> Option<Vec<AiOpinion>> {
         let now = Instant::now();
+        let rule_scope = rule_cache_scope(rules);
         let mut cache = self
             .x_summary_cache
             .lock()
@@ -105,12 +110,7 @@ impl AiAnalyzer {
         let mut opinions = Vec::with_capacity(items.len());
 
         for item in items {
-            let hit = cache.get(item, now)?;
-            opinions.push(AiOpinion {
-                client_id: hit.client_id,
-                opinion: hit.summary,
-                confidence: hit.confidence,
-            });
+            opinions.push(cache.get(item, &rule_scope, now)?);
         }
 
         Some(opinions)
@@ -122,7 +122,18 @@ impl AiAnalyzer {
         let now = Instant::now();
 
         for (item, summary, confidence) in summaries {
-            cache.insert(item, *summary, *confidence, now);
+            cache.insert(
+                item,
+                &rule_cache_scope(&[]),
+                &AiOpinion {
+                    client_id: item.client_id.clone(),
+                    action: AiAction::Keep,
+                    opinion: (*summary).into(),
+                    confidence: *confidence,
+                    matched_rule_ids: Vec::new(),
+                },
+                now,
+            );
         }
 
         Self {
@@ -138,13 +149,92 @@ fn env_flag_default(name: &str, default: bool) -> bool {
         .unwrap_or(default)
 }
 
+/// Active user rule sent to the AI analyzer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AiContentRule {
+    /// Stable rule ID.
+    pub id: String,
+    /// Short human-readable rule name.
+    pub title: String,
+    /// Agent-facing instruction text.
+    pub instruction: String,
+    /// Examples that should match this rule.
+    pub positive_examples: Vec<String>,
+    /// Examples that should not match this rule.
+    pub negative_examples: Vec<String>,
+}
+
+impl From<ContentRule> for AiContentRule {
+    fn from(rule: ContentRule) -> Self {
+        Self {
+            id: rule.id,
+            title: rule.title,
+            instruction: rule.instruction,
+            positive_examples: rule.examples.positive,
+            negative_examples: rule.examples.negative,
+        }
+    }
+}
+
 /// AI opinion attached to one analyzed content item.
 #[derive(Debug, Clone)]
 pub struct AiOpinion {
     /// Client-generated ID from the analyzed content item.
     pub client_id: String,
+    /// Rule-driven action to apply to the item.
+    pub action: AiAction,
     /// Short opinion suitable for a browser label.
     pub opinion: String,
     /// Model confidence on a `0.0..=1.0` scale.
     pub confidence: f32,
+    /// Active rule IDs that caused a hide decision.
+    pub matched_rule_ids: Vec<String>,
+}
+
+/// AI action for an analyzed content item.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AiAction {
+    /// Leave the item visible.
+    Keep,
+    /// Hide the item because it matches at least one active rule.
+    Hide,
+}
+
+fn rule_cache_scope(rules: &[AiContentRule]) -> String {
+    if rules.is_empty() {
+        return "none".into();
+    }
+
+    let mut text = String::new();
+    for rule in rules {
+        text.push_str(&rule.id);
+        text.push('\n');
+        text.push_str(&rule.title);
+        text.push('\n');
+        text.push_str(&rule.instruction);
+        text.push('\n');
+        for example in &rule.positive_examples {
+            text.push_str("+ ");
+            text.push_str(example);
+            text.push('\n');
+        }
+        for example in &rule.negative_examples {
+            text.push_str("- ");
+            text.push_str(example);
+            text.push('\n');
+        }
+    }
+
+    format!("{:016x}", stable_hash(&text))
+}
+
+fn stable_hash(text: &str) -> u64 {
+    let mut hash = 0xcbf29ce484222325_u64;
+
+    for byte in text.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+
+    hash
 }

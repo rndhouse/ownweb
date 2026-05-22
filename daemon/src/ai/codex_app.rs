@@ -1,4 +1,4 @@
-use super::AiOpinion;
+use super::{AiAction, AiContentRule, AiOpinion};
 use crate::core::ContentItem;
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
@@ -40,15 +40,20 @@ impl CodexAppAnalyzer {
     }
 
     /// Gets short Codex opinions for X posts.
-    pub async fn x_opinions(&self, items: &[ContentItem]) -> Result<Vec<AiOpinion>, CodexAppError> {
+    pub async fn x_opinions(
+        &self,
+        items: &[ContentItem],
+        rules: &[AiContentRule],
+    ) -> Result<Vec<AiOpinion>, CodexAppError> {
         let prompt_items = prompt_items(items);
         if prompt_items.is_empty() {
             return Ok(Vec::new());
         }
+        let prompt_rules = prompt_rules(rules);
 
         match timeout(
             self.config.request_timeout,
-            self.run_x_opinion_turn(prompt_items),
+            self.run_x_opinion_turn(prompt_items, prompt_rules),
         )
         .await
         {
@@ -67,6 +72,7 @@ impl CodexAppAnalyzer {
     async fn run_x_opinion_turn(
         &self,
         prompt_items: Vec<PromptItem>,
+        prompt_rules: Vec<PromptRule>,
     ) -> Result<Vec<AiOpinion>, CodexAppError> {
         let mut state = self.state.lock().await;
         self.check_child_status(&mut state).await?;
@@ -81,7 +87,7 @@ impl CodexAppAnalyzer {
             .as_mut()
             .ok_or_else(|| CodexAppError::Protocol("missing Codex app-server session".into()))?;
         let result = session
-            .start_turn(&self.config, &thread_id, prompt_items)
+            .start_turn(&self.config, &thread_id, prompt_items, prompt_rules)
             .await;
 
         if result.is_err() {
@@ -265,8 +271,8 @@ impl CodexAppSession {
                     "sandbox": "read-only",
                     "model": config.model,
                     "serviceTier": null,
-                    "baseInstructions": "You summarize X/Twitter posts for OwnWeb. Return only the requested JSON.",
-                    "developerInstructions": "Return concise valid JSON. Do not use tools. Do not run commands. Keep each summary under 120 characters.",
+                    "baseInstructions": "You evaluate X/Twitter posts for OwnWeb using user-defined rules. Return only the requested JSON.",
+                    "developerInstructions": "Return concise valid JSON. Do not use tools. Do not run commands. Use only keep or hide actions. Keep each opinion under 120 characters.",
                     "ephemeral": true,
                     "experimentalRawEvents": false,
                     "persistExtendedHistory": false
@@ -288,8 +294,9 @@ impl CodexAppSession {
         config: &CodexAppConfig,
         thread_id: &str,
         items: Vec<PromptItem>,
+        rules: Vec<PromptRule>,
     ) -> Result<Vec<AiOpinion>, CodexAppError> {
-        let prompt = build_prompt(&items)?;
+        let prompt = build_prompt(&items, &rules)?;
         let schema = output_schema();
         let result = self
             .request(
@@ -440,6 +447,16 @@ struct PromptItem {
     url: Option<String>,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PromptRule {
+    id: String,
+    title: String,
+    instruction: String,
+    positive_examples: Vec<String>,
+    negative_examples: Vec<String>,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct OpinionResponse {
@@ -450,8 +467,17 @@ struct OpinionResponse {
 #[serde(rename_all = "camelCase")]
 struct OpinionItem {
     client_id: String,
+    action: OpinionAction,
     opinion: String,
     confidence: f32,
+    matched_rule_ids: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum OpinionAction {
+    Keep,
+    Hide,
 }
 
 fn prompt_items(items: &[ContentItem]) -> Vec<PromptItem> {
@@ -473,10 +499,24 @@ fn prompt_items(items: &[ContentItem]) -> Vec<PromptItem> {
         .collect()
 }
 
-fn build_prompt(items: &[PromptItem]) -> Result<String, CodexAppError> {
+fn prompt_rules(rules: &[AiContentRule]) -> Vec<PromptRule> {
+    rules
+        .iter()
+        .map(|rule| PromptRule {
+            id: rule.id.clone(),
+            title: rule.title.clone(),
+            instruction: rule.instruction.clone(),
+            positive_examples: rule.positive_examples.clone(),
+            negative_examples: rule.negative_examples.clone(),
+        })
+        .collect()
+}
+
+fn build_prompt(items: &[PromptItem], rules: &[PromptRule]) -> Result<String, CodexAppError> {
     let items_json = serde_json::to_string(items)?;
+    let rules_json = serde_json::to_string(rules)?;
     Ok(format!(
-        "For each X post below, write a short summary or your understanding of what the author is saying. Always return one item for every clientId. Use plain language. If text is empty, summarize only what can be inferred from the URL or say that no text was captured. Do not hide, dim, or replace content. Return only JSON matching the schema. Posts JSON: {items_json}"
+        "Evaluate each X post against the active user rules. Active rules JSON: {rules_json}\nPosts JSON: {items_json}\nReturn one opinion for every clientId. The only valid actions are \"keep\" and \"hide\". Use \"hide\" only when the post clearly matches one or more active rules; include those rule IDs in matchedRuleIds. Use \"keep\" when no active rule clearly matches, and return an empty matchedRuleIds array. Do not dim, label, or replace content. Keep opinion under 120 characters and explain the decision in plain language. Return only JSON matching the schema."
     ))
 }
 
@@ -492,10 +532,15 @@ fn output_schema() -> Value {
                     "additionalProperties": false,
                     "properties": {
                         "clientId": { "type": "string" },
+                        "action": { "type": "string", "enum": ["keep", "hide"] },
                         "opinion": { "type": "string" },
-                        "confidence": { "type": "number" }
+                        "confidence": { "type": "number" },
+                        "matchedRuleIds": {
+                            "type": "array",
+                            "items": { "type": "string" }
+                        }
                     },
-                    "required": ["clientId", "opinion", "confidence"]
+                    "required": ["clientId", "action", "opinion", "confidence", "matchedRuleIds"]
                 }
             }
         },
@@ -510,8 +555,13 @@ fn parse_opinions(text: &str) -> Result<Vec<AiOpinion>, CodexAppError> {
         .into_iter()
         .map(|opinion| AiOpinion {
             client_id: opinion.client_id,
+            action: match opinion.action {
+                OpinionAction::Keep => AiAction::Keep,
+                OpinionAction::Hide => AiAction::Hide,
+            },
             opinion: opinion.opinion.trim().to_string(),
             confidence: opinion.confidence.clamp(0.0, 1.0),
+            matched_rule_ids: opinion.matched_rule_ids,
         })
         .collect())
 }
@@ -563,5 +613,61 @@ impl From<tokio_tungstenite::tungstenite::Error> for CodexAppError {
 impl From<serde_json::Error> for CodexAppError {
     fn from(error: serde_json::Error) -> Self {
         Self::Json(error)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn prompt_includes_active_rules() {
+        let items = vec![PromptItem {
+            client_id: "client-1".into(),
+            author: Some("@alice".into()),
+            text: "look at this absurd video".into(),
+            url: Some("https://x.com/alice/status/123".into()),
+        }];
+        let rules = vec![PromptRule {
+            id: "x-engagement-bait-reaction".into(),
+            title: "Engagement bait reaction posts".into(),
+            instruction: "Downrank engagement bait reaction posts.".into(),
+            positive_examples: vec!["lol this clip is ridiculous".into()],
+            negative_examples: vec!["here is a specific claim".into()],
+        }];
+
+        let prompt = build_prompt(&items, &rules).expect("prompt should build");
+
+        assert!(prompt.contains("Active rules JSON"));
+        assert!(prompt.contains("x-engagement-bait-reaction"));
+        assert!(prompt.contains("look at this absurd video"));
+        assert!(prompt.contains("The only valid actions are \"keep\" and \"hide\""));
+    }
+
+    #[test]
+    fn parse_opinions_reads_hide_actions_and_rule_ids() {
+        let opinions = parse_opinions(
+            r#"{
+                "opinions": [
+                    {
+                        "clientId": "client-1",
+                        "action": "hide",
+                        "opinion": "Matches engagement-bait reaction rule.",
+                        "confidence": 1.2,
+                        "matchedRuleIds": ["x-engagement-bait-reaction"]
+                    }
+                ]
+            }"#,
+        )
+        .expect("opinion json should parse");
+
+        assert_eq!(opinions.len(), 1);
+        assert_eq!(opinions[0].client_id, "client-1");
+        assert_eq!(opinions[0].action, AiAction::Hide);
+        assert_eq!(opinions[0].confidence, 1.0);
+        assert_eq!(
+            opinions[0].matched_rule_ids,
+            vec!["x-engagement-bait-reaction"]
+        );
     }
 }

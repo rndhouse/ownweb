@@ -1,3 +1,4 @@
+use super::{AiAction, AiOpinion};
 use crate::core::ContentItem;
 use std::{
     collections::HashMap,
@@ -10,7 +11,7 @@ const DEFAULT_TTL_SECS: u64 = 24 * 60 * 60;
 const MAX_ENTRIES_ENV: &str = "OWNWEB_X_SUMMARY_CACHE_MAX_ENTRIES";
 const TTL_SECS_ENV: &str = "OWNWEB_X_SUMMARY_CACHE_TTL_SECS";
 
-/// In-memory cache for X post summaries returned by Codex.
+/// In-memory cache for X post opinions returned by Codex.
 #[derive(Debug)]
 pub struct SummaryCache {
     entries: HashMap<String, CachedSummary>,
@@ -35,9 +36,9 @@ impl SummaryCache {
         }
     }
 
-    /// Gets a cached summary for an item and rewrites it to the current client ID.
-    pub fn get(&mut self, item: &ContentItem, now: Instant) -> Option<CachedSummaryHit> {
-        let key = cache_key(item)?;
+    /// Gets a cached opinion for an item and rewrites it to the current client ID.
+    pub fn get(&mut self, item: &ContentItem, rule_scope: &str, now: Instant) -> Option<AiOpinion> {
+        let key = cache_key(item, rule_scope)?;
         let is_expired = self
             .entries
             .get(&key)
@@ -55,26 +56,29 @@ impl SummaryCache {
             target: "ownweb_daemon::summary_cache",
             client_id = %item.client_id,
             content_id = item.content_id.as_deref(),
+            rule_scope = %rule_scope,
             cache_key = %key,
-            "X summary cache hit"
+            "X opinion cache hit"
         );
 
-        Some(CachedSummaryHit {
+        Some(AiOpinion {
             client_id: item.client_id.clone(),
-            summary: entry.summary.clone(),
+            action: entry.action,
+            opinion: entry.opinion.clone(),
             confidence: entry.confidence,
+            matched_rule_ids: entry.matched_rule_ids.clone(),
         })
     }
 
-    /// Stores a summary for an item when that item has a stable cache key.
+    /// Stores an opinion for an item when that item has a stable cache key.
     pub fn insert(
         &mut self,
         item: &ContentItem,
-        summary: impl Into<String>,
-        confidence: f32,
+        rule_scope: &str,
+        opinion: &AiOpinion,
         now: Instant,
     ) {
-        let Some(key) = cache_key(item) else {
+        let Some(key) = cache_key(item, rule_scope) else {
             return;
         };
 
@@ -87,8 +91,10 @@ impl SummaryCache {
         self.entries.insert(
             key,
             CachedSummary {
-                summary: summary.into(),
-                confidence,
+                action: opinion.action,
+                opinion: opinion.opinion.clone(),
+                confidence: opinion.confidence,
+                matched_rule_ids: opinion.matched_rule_ids.clone(),
                 created_at: now,
                 last_used: now,
             },
@@ -112,30 +118,21 @@ impl SummaryCache {
     }
 }
 
-/// Cached summary rewritten for the current content item.
-#[derive(Debug, Clone)]
-pub struct CachedSummaryHit {
-    /// Client-generated ID from the current analyzed content item.
-    pub client_id: String,
-    /// Cached summary text.
-    pub summary: String,
-    /// Cached model confidence.
-    pub confidence: f32,
-}
-
 #[derive(Debug)]
 struct CachedSummary {
-    summary: String,
+    action: AiAction,
+    opinion: String,
     confidence: f32,
+    matched_rule_ids: Vec<String>,
     created_at: Instant,
     last_used: Instant,
 }
 
-fn cache_key(item: &ContentItem) -> Option<String> {
+fn cache_key(item: &ContentItem, rule_scope: &str) -> Option<String> {
     let normalized_text = normalize_text(&item.text);
 
     if let Some(content_id) = stable_content_id(item) {
-        return Some(format!("x:v2:id:{content_id}"));
+        return Some(format!("x:v3:rules:{rule_scope}:id:{content_id}"));
     }
 
     let author = item.author.as_deref().unwrap_or_default().trim();
@@ -146,7 +143,7 @@ fn cache_key(item: &ContentItem) -> Option<String> {
     }
 
     Some(format!(
-        "x:v1:fallback:{:016x}",
+        "x:v2:rules:{rule_scope}:fallback:{:016x}",
         stable_hash(&format!(
             "author={}\nurl={}\ntext={}",
             author, url, normalized_text
@@ -227,6 +224,8 @@ mod tests {
     use super::*;
     use serde_json::Value;
 
+    const RULE_SCOPE: &str = "test-rules";
+
     fn item(client_id: &str, content_id: Option<&str>, text: &str) -> ContentItem {
         ContentItem {
             client_id: client_id.into(),
@@ -240,23 +239,35 @@ mod tests {
         }
     }
 
+    fn opinion(item: &ContentItem, action: AiAction, text: &str, confidence: f32) -> AiOpinion {
+        AiOpinion {
+            client_id: item.client_id.clone(),
+            action,
+            opinion: text.into(),
+            confidence,
+            matched_rule_ids: Vec::new(),
+        }
+    }
+
     #[test]
     fn cache_hits_use_the_current_client_id() {
         let now = Instant::now();
         let mut cache = SummaryCache::new(10, Duration::from_secs(60));
+        let cached_item = item("first", Some("123"), "hello world");
         cache.insert(
-            &item("first", Some("123"), "hello world"),
-            "summary",
-            0.7,
+            &cached_item,
+            RULE_SCOPE,
+            &opinion(&cached_item, AiAction::Hide, "matched rule", 0.7),
             now,
         );
 
         let hit = cache
-            .get(&item("second", Some("123"), "hello world"), now)
-            .expect("summary should be cached");
+            .get(&item("second", Some("123"), "hello world"), RULE_SCOPE, now)
+            .expect("opinion should be cached");
 
         assert_eq!(hit.client_id, "second");
-        assert_eq!(hit.summary, "summary");
+        assert_eq!(hit.action, AiAction::Hide);
+        assert_eq!(hit.opinion, "matched rule");
         assert_eq!(hit.confidence, 0.7);
     }
 
@@ -264,15 +275,20 @@ mod tests {
     fn content_id_cache_ignores_whitespace_variation() {
         let now = Instant::now();
         let mut cache = SummaryCache::new(10, Duration::from_secs(60));
+        let cached_item = item("first", Some("123"), "hello   world");
         cache.insert(
-            &item("first", Some("123"), "hello   world"),
-            "summary",
-            0.7,
+            &cached_item,
+            RULE_SCOPE,
+            &opinion(&cached_item, AiAction::Keep, "summary", 0.7),
             now,
         );
 
         assert!(cache
-            .get(&item("second", Some("123"), "hello\nworld"), now)
+            .get(
+                &item("second", Some("123"), "hello\nworld"),
+                RULE_SCOPE,
+                now
+            )
             .is_some());
     }
 
@@ -280,15 +296,20 @@ mod tests {
     fn content_id_cache_ignores_text_changes() {
         let now = Instant::now();
         let mut cache = SummaryCache::new(10, Duration::from_secs(60));
+        let cached_item = item("first", Some("123"), "hello world");
         cache.insert(
-            &item("first", Some("123"), "hello world"),
-            "summary",
-            0.7,
+            &cached_item,
+            RULE_SCOPE,
+            &opinion(&cached_item, AiAction::Keep, "summary", 0.7),
             now,
         );
 
         assert!(cache
-            .get(&item("second", Some("123"), "different text"), now)
+            .get(
+                &item("second", Some("123"), "different text"),
+                RULE_SCOPE,
+                now
+            )
             .is_some());
     }
 
@@ -296,10 +317,16 @@ mod tests {
     fn status_url_cache_ignores_text_changes() {
         let now = Instant::now();
         let mut cache = SummaryCache::new(10, Duration::from_secs(60));
-        cache.insert(&item("first", None, "hello world"), "summary", 0.7, now);
+        let cached_item = item("first", None, "hello world");
+        cache.insert(
+            &cached_item,
+            RULE_SCOPE,
+            &opinion(&cached_item, AiAction::Keep, "summary", 0.7),
+            now,
+        );
 
         assert!(cache
-            .get(&item("second", None, "different text"), now)
+            .get(&item("second", None, "different text"), RULE_SCOPE, now)
             .is_some());
     }
 
@@ -307,16 +334,18 @@ mod tests {
     fn expired_entries_are_ignored() {
         let now = Instant::now();
         let mut cache = SummaryCache::new(10, Duration::from_secs(1));
+        let cached_item = item("first", Some("123"), "hello world");
         cache.insert(
-            &item("first", Some("123"), "hello world"),
-            "summary",
-            0.7,
+            &cached_item,
+            RULE_SCOPE,
+            &opinion(&cached_item, AiAction::Keep, "summary", 0.7),
             now,
         );
 
         assert!(cache
             .get(
                 &item("second", Some("123"), "hello world"),
+                RULE_SCOPE,
                 now + Duration::from_secs(2)
             )
             .is_none());
@@ -326,17 +355,43 @@ mod tests {
     fn cache_evicts_least_recently_used_entries() {
         let now = Instant::now();
         let mut cache = SummaryCache::new(1, Duration::from_secs(60));
-        cache.insert(&item("first", Some("123"), "one"), "first", 0.7, now);
+        let first_item = item("first", Some("123"), "one");
         cache.insert(
-            &item("second", Some("456"), "two"),
-            "second",
-            0.8,
+            &first_item,
+            RULE_SCOPE,
+            &opinion(&first_item, AiAction::Keep, "first", 0.7),
+            now,
+        );
+        let second_item = item("second", Some("456"), "two");
+        cache.insert(
+            &second_item,
+            RULE_SCOPE,
+            &opinion(&second_item, AiAction::Keep, "second", 0.8),
             now + Duration::from_secs(1),
         );
 
-        assert!(cache.get(&item("third", Some("123"), "one"), now).is_none());
         assert!(cache
-            .get(&item("fourth", Some("456"), "two"), now)
+            .get(&item("third", Some("123"), "one"), RULE_SCOPE, now)
+            .is_none());
+        assert!(cache
+            .get(&item("fourth", Some("456"), "two"), RULE_SCOPE, now)
             .is_some());
+    }
+
+    #[test]
+    fn rule_scope_changes_cache_key() {
+        let now = Instant::now();
+        let mut cache = SummaryCache::new(10, Duration::from_secs(60));
+        let cached_item = item("first", Some("123"), "hello world");
+        cache.insert(
+            &cached_item,
+            "rule-a",
+            &opinion(&cached_item, AiAction::Hide, "matched rule", 0.7),
+            now,
+        );
+
+        assert!(cache
+            .get(&item("second", Some("123"), "hello world"), "rule-b", now)
+            .is_none());
     }
 }
