@@ -53,11 +53,11 @@
   color: rgb(83, 100, 113);
   cursor: pointer;
   line-height: 1;
-  transform: translateY(4px);
+  transform: translateY(3px);
 }
 
 .ownweb-feedback-button--subject {
-  transform: translateY(5px);
+  transform: translateY(6px);
 }
 
 .ownweb-feedback-button:hover,
