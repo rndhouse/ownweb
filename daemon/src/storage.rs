@@ -13,6 +13,7 @@ use tracing::{info, warn};
 const DATA_DIR_ENV: &str = "OWNWEB_DATA_DIR";
 const RESET_X_DB_ENV: &str = "OWNWEB_X_RESET_DB";
 const DB_FILE_NAME: &str = "db.sqlite";
+const DEFAULT_RULE_LIMIT: usize = 100;
 
 /// Filesystem-backed storage for content encountered by the daemon.
 #[derive(Clone)]
@@ -88,6 +89,77 @@ pub struct XDislikedPost {
     pub latest_captured_at: Option<String>,
 }
 
+/// Query options for listing content rules.
+#[derive(Debug, Clone)]
+pub struct RuleQuery {
+    /// Optional site-specific status filter such as `active` or `draft`.
+    pub status: Option<String>,
+    /// Maximum number of rows to return.
+    pub limit: usize,
+    /// Number of matching rows to skip.
+    pub offset: usize,
+}
+
+impl Default for RuleQuery {
+    fn default() -> Self {
+        Self {
+            status: None,
+            limit: DEFAULT_RULE_LIMIT,
+            offset: 0,
+        }
+    }
+}
+
+/// Page of stored content rules.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RulePage {
+    /// Number of matching rows before pagination.
+    pub total_matching: usize,
+    /// Maximum number of rows requested.
+    pub limit: usize,
+    /// Number of matching rows skipped.
+    pub offset: usize,
+    /// Matching rules.
+    pub items: Vec<ContentRule>,
+}
+
+/// Stored user policy rule available to filtering agents.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ContentRule {
+    /// Stable rule ID.
+    pub id: String,
+    /// Site scope for the rule.
+    pub site: String,
+    /// Rule lifecycle status such as `draft`, `active`, or `disabled`.
+    pub status: String,
+    /// Lower numbers run earlier when multiple rules are active.
+    pub priority: i64,
+    /// Short human-readable rule name.
+    pub title: String,
+    /// Agent-facing instruction text.
+    pub instruction: String,
+    /// Source that created this rule.
+    pub created_source: String,
+    /// Rule creation timestamp.
+    pub created_at_unix_ms: i64,
+    /// Rule update timestamp.
+    pub updated_at_unix_ms: i64,
+    /// Examples attached to this rule.
+    pub examples: RuleExamples,
+}
+
+/// Positive and negative examples for one content rule.
+#[derive(Debug, Clone, Serialize, serde::Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RuleExamples {
+    /// Examples that should match this rule.
+    pub positive: Vec<String>,
+    /// Examples that should not match this rule.
+    pub negative: Vec<String>,
+}
+
 impl ContentStore {
     /// Opens the per-site storage databases under the configured data directory.
     pub fn from_env() -> Result<Self> {
@@ -153,6 +225,15 @@ impl ContentStore {
             .lock()
             .expect("X storage mutex should not be poisoned");
         db.dislikes(query)
+    }
+
+    /// Lists stored X/Twitter content rules.
+    pub fn x_rules(&self, query: RuleQuery) -> Result<RulePage> {
+        let db = self
+            .x_com
+            .lock()
+            .expect("X storage mutex should not be poisoned");
+        db.rules(query)
     }
 }
 

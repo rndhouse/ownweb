@@ -2,7 +2,7 @@ use crate::{
     ai::AiAnalyzer,
     core::{DomAnalysisBatch, DomCommand, DomElementSnapshot, FeedbackKind, PageSnapshot},
     sites,
-    storage::{ContentStore, StorageError, XDislikeQuery, XDislikedPost},
+    storage::{ContentRule, ContentStore, RuleQuery, StorageError, XDislikeQuery, XDislikedPost},
 };
 use axum::{
     extract::ws::{Message, WebSocket, WebSocketUpgrade},
@@ -22,6 +22,8 @@ use tracing::{debug, info, warn};
 const LOG_CAPTURED_CONTENT_ENV: &str = "OWNWEB_LOG_CAPTURED_CONTENT";
 const DEFAULT_DISLIKE_LIMIT: usize = 100;
 const MAX_DISLIKE_LIMIT: usize = 500;
+const DEFAULT_RULE_LIMIT: usize = 100;
+const MAX_RULE_LIMIT: usize = 500;
 
 /// Builds the daemon HTTP router.
 pub fn router() -> Result<Router, StorageError> {
@@ -37,6 +39,7 @@ pub fn router() -> Result<Router, StorageError> {
         .route("/v1/dom/analyze", post(analyze_dom))
         .route("/v1/dom/feedback", post(dom_feedback))
         .route("/v1/sites/x.com/dislikes", get(x_dislikes))
+        .route("/v1/sites/x.com/rules", get(x_rules))
         .with_state(state)
         .layer(cors_layer()))
 }
@@ -120,6 +123,35 @@ async fn x_dislikes(
     Ok(Json(XDislikesResponse {
         site: "x.com",
         active,
+        total_matching: page.total_matching,
+        limit: page.limit,
+        offset: page.offset,
+        items: page.items,
+    }))
+}
+
+async fn x_rules(
+    State(state): State<AppState>,
+    Query(query): Query<RulesQuery>,
+) -> Result<Json<RulesResponse>, ApiError> {
+    let status = query
+        .status
+        .map(|status| status.trim().to_string())
+        .filter(|status| !status.is_empty());
+    let limit = query
+        .limit
+        .unwrap_or(DEFAULT_RULE_LIMIT)
+        .min(MAX_RULE_LIMIT);
+    let offset = query.offset.unwrap_or(0);
+    let page = state.content_store.x_rules(RuleQuery {
+        status: status.clone(),
+        limit,
+        offset,
+    })?;
+
+    Ok(Json(RulesResponse {
+        site: "x.com",
+        status,
         total_matching: page.total_matching,
         limit: page.limit,
         offset: page.offset,
@@ -341,6 +373,28 @@ struct XDislikesResponse {
     limit: usize,
     offset: usize,
     items: Vec<XDislikedPost>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RulesQuery {
+    /// Optional rule status filter.
+    status: Option<String>,
+    /// Maximum number of rows to return. Defaults to 100 and is capped at 500.
+    limit: Option<usize>,
+    /// Number of matching rows to skip.
+    offset: Option<usize>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RulesResponse {
+    site: &'static str,
+    status: Option<String>,
+    total_matching: usize,
+    limit: usize,
+    offset: usize,
+    items: Vec<ContentRule>,
 }
 
 #[derive(Debug)]

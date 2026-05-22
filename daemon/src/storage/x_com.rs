@@ -1,6 +1,8 @@
 use crate::{
     core::{AnalysisBatch, ContentItem, FeedbackKind},
-    storage::{XDislikePage, XDislikeQuery, XDislikedPost},
+    storage::{
+        ContentRule, RuleExamples, RulePage, RuleQuery, XDislikePage, XDislikeQuery, XDislikedPost,
+    },
 };
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
@@ -11,6 +13,12 @@ use std::{
 use tracing::debug;
 
 pub(super) const SITE_DIR: &str = "x.com";
+const DEFAULT_RULE_ID: &str = "x-engagement-bait-reaction";
+const DEFAULT_RULE_STATUS: &str = "active";
+const DEFAULT_RULE_PRIORITY: i64 = 50;
+const DEFAULT_RULE_TITLE: &str = "Engagement bait reaction posts";
+const DEFAULT_RULE_INSTRUCTION: &str = "Downrank engagement bait, dunking, or 'look at this absurd thing' posts where the main content is a reaction to a video, image, or quote rather than a substantive claim.";
+const DEFAULT_RULE_SOURCE: &str = "user";
 
 pub(super) struct Store {
     connection: Connection,
@@ -90,8 +98,25 @@ impl Store {
                 ON tweet_feedback_state(active);
             CREATE INDEX IF NOT EXISTS tweet_feedback_state_post_id_idx
                 ON tweet_feedback_state(post_id);
+
+            CREATE TABLE IF NOT EXISTS content_rules (
+                id TEXT PRIMARY KEY,
+                site TEXT NOT NULL,
+                status TEXT NOT NULL,
+                priority INTEGER NOT NULL,
+                title TEXT NOT NULL,
+                instruction TEXT NOT NULL,
+                created_source TEXT NOT NULL,
+                created_at_unix_ms INTEGER NOT NULL,
+                updated_at_unix_ms INTEGER NOT NULL,
+                examples_json TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS content_rules_status_priority_idx
+                ON content_rules(status, priority);
             ",
         )?;
+        seed_default_rules(&connection)?;
 
         Ok(Self { connection })
     }
@@ -371,6 +396,73 @@ impl Store {
             items,
         })
     }
+
+    pub(super) fn rules(&self, query: RuleQuery) -> super::Result<RulePage> {
+        let status = clean_optional(query.status.as_deref());
+        let limit = sqlite_limit(query.limit);
+        let offset = sqlite_limit(query.offset);
+        let total_matching = self.connection.query_row(
+            "
+            SELECT COUNT(*)
+            FROM content_rules
+            WHERE (?1 IS NULL OR status = ?1)
+            ",
+            [status.as_deref()],
+            |row| row.get::<_, i64>(0),
+        )?;
+
+        let mut statement = self.connection.prepare(
+            "
+            SELECT
+                id,
+                site,
+                status,
+                priority,
+                title,
+                instruction,
+                created_source,
+                created_at_unix_ms,
+                updated_at_unix_ms,
+                examples_json
+            FROM content_rules
+            WHERE (?1 IS NULL OR status = ?1)
+            ORDER BY priority ASC, id ASC
+            LIMIT ?2 OFFSET ?3
+            ",
+        )?;
+        let items = statement
+            .query_map(params![status.as_deref(), limit, offset], |row| {
+                let examples_json: String = row.get(9)?;
+                let examples = serde_json::from_str(&examples_json).map_err(|error| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        9,
+                        rusqlite::types::Type::Text,
+                        Box::new(error),
+                    )
+                })?;
+
+                Ok(ContentRule {
+                    id: row.get(0)?,
+                    site: row.get(1)?,
+                    status: row.get(2)?,
+                    priority: row.get(3)?,
+                    title: row.get(4)?,
+                    instruction: row.get(5)?,
+                    created_source: row.get(6)?,
+                    created_at_unix_ms: row.get(7)?,
+                    updated_at_unix_ms: row.get(8)?,
+                    examples,
+                })
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+
+        Ok(RulePage {
+            total_matching: total_matching.max(0) as usize,
+            limit: limit as usize,
+            offset: offset as usize,
+            items,
+        })
+    }
 }
 
 struct StoredTweet {
@@ -512,6 +604,44 @@ fn bool_to_sqlite_int(value: bool) -> i64 {
 
 fn sqlite_limit(value: usize) -> i64 {
     value.min(i64::MAX as usize) as i64
+}
+
+fn seed_default_rules(connection: &Connection) -> super::Result<()> {
+    let now = now_unix_ms();
+    let examples_json = serde_json::to_string(&RuleExamples {
+        positive: Vec::new(),
+        negative: Vec::new(),
+    })?;
+
+    connection.execute(
+        "
+        INSERT OR IGNORE INTO content_rules (
+            id,
+            site,
+            status,
+            priority,
+            title,
+            instruction,
+            created_source,
+            created_at_unix_ms,
+            updated_at_unix_ms,
+            examples_json
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8, ?9)
+        ",
+        params![
+            DEFAULT_RULE_ID,
+            SITE_DIR,
+            DEFAULT_RULE_STATUS,
+            DEFAULT_RULE_PRIORITY,
+            DEFAULT_RULE_TITLE,
+            DEFAULT_RULE_INSTRUCTION,
+            DEFAULT_RULE_SOURCE,
+            now,
+            examples_json,
+        ],
+    )?;
+
+    Ok(())
 }
 
 fn storage_key(item: &ContentItem, post_id: Option<&str>, normalized_text: &str) -> Option<String> {
@@ -862,6 +992,34 @@ mod tests {
         assert_eq!(inactive_page.items.len(), 1);
         assert_eq!(inactive_page.items[0].post_id.as_deref(), Some("456"));
         assert!(!inactive_page.items[0].active);
+
+        let _ = std::fs::remove_dir_all(db_path.parent().unwrap().parent().unwrap());
+    }
+
+    #[test]
+    fn opens_with_default_active_content_rule() {
+        let db_path = temp_db_path("opens-with-default-rule");
+        let store = Store::open(&db_path).expect("store should open");
+
+        let rules = store
+            .rules(RuleQuery {
+                status: Some("active".into()),
+                limit: 100,
+                offset: 0,
+            })
+            .expect("rules should load");
+
+        assert_eq!(rules.total_matching, 1);
+        assert_eq!(rules.items.len(), 1);
+        assert_eq!(rules.items[0].id, DEFAULT_RULE_ID);
+        assert_eq!(rules.items[0].site, SITE_DIR);
+        assert_eq!(rules.items[0].status, DEFAULT_RULE_STATUS);
+        assert_eq!(rules.items[0].priority, DEFAULT_RULE_PRIORITY);
+        assert_eq!(rules.items[0].title, DEFAULT_RULE_TITLE);
+        assert_eq!(rules.items[0].instruction, DEFAULT_RULE_INSTRUCTION);
+        assert_eq!(rules.items[0].created_source, DEFAULT_RULE_SOURCE);
+        assert!(rules.items[0].examples.positive.is_empty());
+        assert!(rules.items[0].examples.negative.is_empty());
 
         let _ = std::fs::remove_dir_all(db_path.parent().unwrap().parent().unwrap());
     }
