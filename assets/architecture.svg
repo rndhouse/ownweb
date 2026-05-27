@@ -37,7 +37,10 @@
   <path class="arrow" d="M 440 120 H 520"/>
 
   <rect class="box" x="530" y="86" width="150" height="68" rx="10"/>
-  <text class="label" x="605" y="120">Daemon</text>
+  <text class="label" x="605" y="109">
+    <tspan x="605" dy="0">WebLayer</tspan>
+    <tspan x="605" dy="22">Daemon</tspan>
+  </text>
 
   <path class="arrow" d="M 690 108 C 730 108 730 58 770 58"/>
   <rect class="box" x="780" y="24" width="120" height="68" rx="10"/>
