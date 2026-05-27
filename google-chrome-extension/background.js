@@ -19,7 +19,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return false;
   }
 
-  if (message.type === "ownweb:analyzeDom") {
+  if (message.type === "weblayer:analyzeDom") {
     analyzeDom(message, sender)
       .then((commands) => sendResponse({ ok: true, commands }))
       .catch((error) => {
@@ -32,7 +32,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
-  if (message.type === "ownweb:feedback") {
+  if (message.type === "weblayer:feedback") {
     sendFeedback(message)
       .then((commands) => sendResponse({ ok: true, commands }))
       .catch((error) => {
@@ -244,7 +244,7 @@ function handleSocketMessage(data) {
   chrome.tabs.sendMessage(
     pendingRequest.tabId,
     {
-      type: "ownweb:applyCommands",
+      type: "weblayer:applyCommands",
       commands
     },
     () => {

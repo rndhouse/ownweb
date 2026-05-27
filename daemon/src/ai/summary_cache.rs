@@ -8,8 +8,8 @@ use tracing::debug;
 
 const DEFAULT_MAX_ENTRIES: usize = 10_000;
 const DEFAULT_TTL_SECS: u64 = 24 * 60 * 60;
-const MAX_ENTRIES_ENV: &str = "OWNWEB_X_SUMMARY_CACHE_MAX_ENTRIES";
-const TTL_SECS_ENV: &str = "OWNWEB_X_SUMMARY_CACHE_TTL_SECS";
+const MAX_ENTRIES_ENV: &str = "WEBLAYER_X_SUMMARY_CACHE_MAX_ENTRIES";
+const TTL_SECS_ENV: &str = "WEBLAYER_X_SUMMARY_CACHE_TTL_SECS";
 
 /// In-memory cache for X post opinions returned by Codex.
 #[derive(Debug)]
@@ -53,7 +53,7 @@ impl SummaryCache {
         entry.last_used = now;
 
         debug!(
-            target: "ownweb_daemon::summary_cache",
+            target: "weblayer_daemon::summary_cache",
             client_id = %item.client_id,
             content_id = item.content_id.as_deref(),
             rule_scope = %rule_scope,

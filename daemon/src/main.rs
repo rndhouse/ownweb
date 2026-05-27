@@ -10,7 +10,7 @@ use tracing::info;
 use tracing_subscriber::EnvFilter;
 
 const DEFAULT_BIND_ADDR: &str = "127.0.0.1:17891";
-const BIND_ADDR_ENV: &str = "OWNWEB_BIND_ADDR";
+const BIND_ADDR_ENV: &str = "WEBLAYER_BIND_ADDR";
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -25,11 +25,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let addr: SocketAddr = bind_addr.parse()?;
 
     let listener = TcpListener::bind(addr).await?;
-    info!(%addr, "ownweb-daemon listening");
+    info!(%addr, "weblayer-daemon listening");
     if api::captured_content_logging_enabled() {
-        info!("ownweb-daemon captured content logging enabled");
+        info!("weblayer-daemon captured content logging enabled");
     } else {
-        info!("ownweb-daemon captured content logging disabled");
+        info!("weblayer-daemon captured content logging disabled");
     }
 
     axum::serve(listener, api::router()?)

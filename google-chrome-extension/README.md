@@ -1,7 +1,7 @@
-# OwnWeb
+# WebLayer
 
 Chrome Manifest V3 extension that sends generic DOM region snapshots to a
-local OwnWeb daemon and applies the daemon's returned DOM commands.
+local WebLayer daemon and applies the daemon's returned DOM commands.
 
 ## Load in Chrome
 

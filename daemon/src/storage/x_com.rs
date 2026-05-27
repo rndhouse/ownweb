@@ -210,7 +210,7 @@ impl Store {
         transaction.commit()?;
 
         debug!(
-            target: "ownweb_daemon::storage::x_com",
+            target: "weblayer_daemon::storage::x_com",
             source = batch.source.as_str(),
             stored_count,
             skipped_count,
@@ -231,7 +231,7 @@ impl Store {
             StoredTweetFeedback::from_item(item, feedback, reason, created_at_unix_ms)?
         else {
             debug!(
-                target: "ownweb_daemon::storage::x_com",
+                target: "weblayer_daemon::storage::x_com",
                 client_id = item.client_id.as_str(),
                 "skipped X feedback without stable storage key"
             );
@@ -313,7 +313,7 @@ impl Store {
         transaction.commit()?;
 
         debug!(
-            target: "ownweb_daemon::storage::x_com",
+            target: "weblayer_daemon::storage::x_com",
             storage_key = record.storage_key.as_str(),
             post_id = record.post_id.as_deref(),
             feedback_kind = record.feedback_kind.as_str(),
@@ -607,7 +607,7 @@ impl Store {
         )?;
 
         debug!(
-            target: "ownweb_daemon::storage::x_com",
+            target: "weblayer_daemon::storage::x_com",
             storage_key = annotation.storage_key.as_str(),
             annotation_type = annotation.annotation_type.as_str(),
             key = annotation.key.as_str(),
@@ -1181,7 +1181,7 @@ mod tests {
 
     fn temp_db_path(name: &str) -> PathBuf {
         let data_dir = std::env::temp_dir().join(format!(
-            "ownweb-x-storage-test-{name}-{}",
+            "weblayer-x-storage-test-{name}-{}",
             std::process::id()
         ));
         let _ = std::fs::remove_dir_all(&data_dir);

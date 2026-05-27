@@ -17,11 +17,11 @@ const DEFAULT_WS_URL: &str = "ws://127.0.0.1:39177";
 const DEFAULT_MODEL: &str = "gpt-5.3-codex-spark";
 const DEFAULT_EFFORT: &str = "low";
 const DEFAULT_TIMEOUT_MS: u64 = 8000;
-const WS_ENV: &str = "OWNWEB_CODEX_APP_WS";
-const MODEL_ENV: &str = "OWNWEB_CODEX_MODEL";
-const EFFORT_ENV: &str = "OWNWEB_CODEX_EFFORT";
-const TIMEOUT_ENV: &str = "OWNWEB_CODEX_TIMEOUT_MS";
-const CWD_ENV: &str = "OWNWEB_CODEX_CWD";
+const WS_ENV: &str = "WEBLAYER_CODEX_APP_WS";
+const MODEL_ENV: &str = "WEBLAYER_CODEX_MODEL";
+const EFFORT_ENV: &str = "WEBLAYER_CODEX_EFFORT";
+const TIMEOUT_ENV: &str = "WEBLAYER_CODEX_TIMEOUT_MS";
+const CWD_ENV: &str = "WEBLAYER_CODEX_CWD";
 
 /// Codex app-server analyzer backed by one local app-server process.
 pub struct CodexAppAnalyzer {
@@ -242,8 +242,8 @@ impl CodexAppSession {
             "initialize",
             json!({
                 "clientInfo": {
-                    "name": "ownweb-daemon",
-                    "title": "OwnWeb Daemon",
+                    "name": "weblayer-daemon",
+                    "title": "WebLayer Daemon",
                     "version": env!("CARGO_PKG_VERSION")
                 },
                 "capabilities": {
@@ -271,7 +271,7 @@ impl CodexAppSession {
                     "sandbox": "read-only",
                     "model": config.model,
                     "serviceTier": null,
-                    "baseInstructions": "You evaluate X/Twitter posts for OwnWeb using user-defined rules. Return only the requested JSON.",
+                    "baseInstructions": "You evaluate X/Twitter posts for WebLayer using user-defined rules. Return only the requested JSON.",
                     "developerInstructions": "Return concise valid JSON. Do not use tools. Do not run commands. Use only keep or hide actions. Keep each opinion under 120 characters.",
                     "ephemeral": true,
                     "experimentalRawEvents": false,

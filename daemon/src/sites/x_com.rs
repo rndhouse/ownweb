@@ -169,7 +169,7 @@ fn stored_dislike_decision(
     match content_store.x_feedback_state(item) {
         Ok(Some(state)) if state.active => Some(ContentDecision::hide(
             item.client_id.clone(),
-            "OwnWeb: hidden",
+            "WebLayer: hidden",
             "Previously disliked",
             1.0,
         )),
@@ -254,7 +254,7 @@ fn reviewed_item_decision(opinion: AiOpinion) -> ContentDecision {
         AiAction::Keep => ContentDecision::keep(opinion.client_id),
         AiAction::Hide => ContentDecision::hide(
             opinion.client_id,
-            "OwnWeb: hidden by rule",
+            "WebLayer: hidden by rule",
             opinion.opinion,
             opinion.confidence,
         ),
@@ -347,13 +347,13 @@ fn has_root_attribute(element: &DomElementSnapshot, name: &str, value: &str) -> 
 }
 
 fn trace_identified_post(item: &ContentItem) {
-    if !tracing::enabled!(target: "ownweb_daemon::sites::x_com", Level::TRACE) {
+    if !tracing::enabled!(target: "weblayer_daemon::sites::x_com", Level::TRACE) {
         return;
     }
 
     if let Ok(post_json) = serde_json::to_string(item) {
         trace!(
-            target: "ownweb_daemon::sites::x_com",
+            target: "weblayer_daemon::sites::x_com",
             client_id = item.client_id.as_str(),
             content_id = item.content_id.as_deref(),
             url = item.url.as_deref(),
@@ -535,8 +535,10 @@ mod tests {
     }
 
     fn temp_data_dir(name: &str) -> PathBuf {
-        let path =
-            std::env::temp_dir().join(format!("ownweb-x-site-test-{name}-{}", std::process::id()));
+        let path = std::env::temp_dir().join(format!(
+            "weblayer-x-site-test-{name}-{}",
+            std::process::id()
+        ));
         let _ = std::fs::remove_dir_all(&path);
         path
     }
@@ -701,7 +703,7 @@ mod tests {
 
         assert!(matches!(decision.action, DecisionAction::Hide));
         assert_eq!(decision.client_id, "client-1");
-        assert_eq!(decision.label.as_deref(), Some("OwnWeb: hidden by rule"));
+        assert_eq!(decision.label.as_deref(), Some("WebLayer: hidden by rule"));
         assert_eq!(
             decision.reason.as_deref(),
             Some("Matches low-value reaction rule")
@@ -766,7 +768,10 @@ mod tests {
             pending_commands[0].action,
             crate::core::DomCommandAction::Hide
         ));
-        assert_eq!(pending_commands[0].label.as_deref(), Some("OwnWeb: hidden"));
+        assert_eq!(
+            pending_commands[0].label.as_deref(),
+            Some("WebLayer: hidden")
+        );
 
         let _ = std::fs::remove_dir_all(data_dir);
     }

@@ -24,7 +24,7 @@ use tokio::sync::mpsc;
 use tower_http::cors::{Any, CorsLayer};
 use tracing::{debug, info, warn};
 
-const LOG_CAPTURED_CONTENT_ENV: &str = "OWNWEB_LOG_CAPTURED_CONTENT";
+const LOG_CAPTURED_CONTENT_ENV: &str = "WEBLAYER_LOG_CAPTURED_CONTENT";
 const DEFAULT_CONTENT_LIMIT: usize = 100;
 const MAX_CONTENT_LIMIT: usize = 500;
 const DEFAULT_DISLIKE_LIMIT: usize = 100;
@@ -75,7 +75,7 @@ fn cors_layer() -> CorsLayer {
 async fn health() -> Json<HealthResponse> {
     Json(HealthResponse {
         ok: true,
-        service: "ownweb-daemon",
+        service: "weblayer-daemon",
     })
 }
 
@@ -409,7 +409,7 @@ fn log_dom_batch(batch: &DomAnalysisBatch) {
         match serde_json::to_string(element) {
             Ok(element_json) => {
                 info!(
-                    target: "ownweb_daemon::captured_dom",
+                    target: "weblayer_daemon::captured_dom",
                     page_url = batch.page.url.as_str(),
                     client_id = element.client_id.as_str(),
                     selector = element.selector.as_deref(),

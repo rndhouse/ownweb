@@ -1,4 +1,4 @@
-# OwnWeb Daemon
+# WebLayer Daemon
 
 Local REST service for the Chrome extension.
 
@@ -11,7 +11,7 @@ cargo run
 The daemon binds to `127.0.0.1:17891` by default. Override it with:
 
 ```sh
-OWNWEB_BIND_ADDR=127.0.0.1:19000 cargo run
+WEBLAYER_BIND_ADDR=127.0.0.1:19000 cargo run
 ```
 
 Daemon output goes through structured logs on stdout. The default log level is
@@ -20,28 +20,28 @@ Daemon output goes through structured logs on stdout. The default log level is
 Incoming posts are not logged by default. To enable captured-content log events:
 
 ```sh
-OWNWEB_LOG_CAPTURED_CONTENT=1 cargo run
+WEBLAYER_LOG_CAPTURED_CONTENT=1 cargo run
 ```
 
 Encountered site content is stored in per-site SQLite databases under the local
-OwnWeb data directory. X posts are stored at:
+WebLayer data directory. X posts are stored at:
 
 ```text
-~/.local/share/ownweb/x.com/db.sqlite
+~/.local/share/weblayer/x.com/db.sqlite
 ```
 
 X feedback is stored in the same database as both an append-only event log and
 current feedback state. A stored active thumbs-down makes later scans hide that
 post by X status ID.
 
-Override the root data directory with `OWNWEB_DATA_DIR`. The daemon uses
+Override the root data directory with `WEBLAYER_DATA_DIR`. The daemon uses
 bundled SQLite through Rust dependencies, so no separate SQLite service or
 system install is required.
 
 For development, reset the X database on startup with:
 
 ```sh
-OWNWEB_X_RESET_DB=1 cargo run
+WEBLAYER_X_RESET_DB=1 cargo run
 ```
 
 This removes `db.sqlite`, `db.sqlite-wal`, and `db.sqlite-shm` for `x.com`
@@ -68,17 +68,17 @@ cargo run
 Useful environment variables:
 
 ```sh
-OWNWEB_CODEX_APP_ENABLED=0
-OWNWEB_CODEX_APP_WS=ws://127.0.0.1:39177
-OWNWEB_CODEX_MODEL=gpt-5.3-codex-spark
-OWNWEB_CODEX_EFFORT=low
-OWNWEB_CODEX_TIMEOUT_MS=8000
-OWNWEB_CODEX_CWD=/home/user/dev/ownweb/public
-OWNWEB_DATA_DIR=/home/user/.local/share/ownweb
-OWNWEB_LOG_CAPTURED_CONTENT=0
-OWNWEB_X_RESET_DB=0
-OWNWEB_X_SUMMARY_CACHE_MAX_ENTRIES=10000
-OWNWEB_X_SUMMARY_CACHE_TTL_SECS=86400
+WEBLAYER_CODEX_APP_ENABLED=0
+WEBLAYER_CODEX_APP_WS=ws://127.0.0.1:39177
+WEBLAYER_CODEX_MODEL=gpt-5.3-codex-spark
+WEBLAYER_CODEX_EFFORT=low
+WEBLAYER_CODEX_TIMEOUT_MS=8000
+WEBLAYER_CODEX_CWD=/home/user/dev/weblayer/public
+WEBLAYER_DATA_DIR=/home/user/.local/share/weblayer
+WEBLAYER_LOG_CAPTURED_CONTENT=0
+WEBLAYER_X_RESET_DB=0
+WEBLAYER_X_SUMMARY_CACHE_MAX_ENTRIES=10000
+WEBLAYER_X_SUMMARY_CACHE_TTL_SECS=86400
 RUST_LOG=debug
 ```
 

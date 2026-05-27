@@ -1,18 +1,18 @@
-.ownweb-hidden {
+.weblayer-hidden {
   display: none !important;
 }
 
-.ownweb-dimmed {
+.weblayer-dimmed {
   opacity: 0.38 !important;
   transition: opacity 160ms ease;
 }
 
-.ownweb-dimmed:hover,
-.ownweb-dimmed:focus-within {
+.weblayer-dimmed:hover,
+.weblayer-dimmed:focus-within {
   opacity: 0.86 !important;
 }
 
-.ownweb-badge {
+.weblayer-badge {
   display: inline-flex;
   align-items: center;
   max-width: calc(100% - 32px);
@@ -26,11 +26,11 @@
   overflow-wrap: anywhere;
 }
 
-.ownweb-badge-text {
+.weblayer-badge-text {
   min-width: 0;
 }
 
-.ownweb-feedback-slot {
+.weblayer-feedback-slot {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -38,7 +38,7 @@
   min-width: 0;
 }
 
-.ownweb-feedback-button {
+.weblayer-feedback-button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -56,32 +56,32 @@
   transform: translateY(3px);
 }
 
-.ownweb-feedback-button--subject {
+.weblayer-feedback-button--subject {
   transform: translateY(7px);
 }
 
-.ownweb-feedback-button:hover,
-.ownweb-feedback-button:focus-visible {
+.weblayer-feedback-button:hover,
+.weblayer-feedback-button:focus-visible {
   background: rgba(244, 33, 46, 0.1);
   color: rgb(244, 33, 46);
   outline: none;
 }
 
-.ownweb-feedback-button--active {
+.weblayer-feedback-button--active {
   color: rgb(244, 33, 46);
 }
 
-.ownweb-feedback-button--active:hover,
-.ownweb-feedback-button--active:focus-visible {
+.weblayer-feedback-button--active:hover,
+.weblayer-feedback-button--active:focus-visible {
   background: rgba(244, 33, 46, 0.14);
 }
 
-.ownweb-feedback-button:disabled {
+.weblayer-feedback-button:disabled {
   cursor: default;
   opacity: 0.6;
 }
 
-.ownweb-feedback-icon {
+.weblayer-feedback-icon {
   width: 18px;
   height: 18px;
   fill: none;
@@ -91,7 +91,7 @@
   stroke-linejoin: round;
 }
 
-.ownweb-feedback-panel {
+.weblayer-feedback-panel {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
@@ -107,13 +107,13 @@
   font: 13px/1.35 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 
-.ownweb-feedback-panel-label {
+.weblayer-feedback-panel-label {
   flex: 0 0 auto;
   color: rgb(113, 118, 123);
   font-weight: 600;
 }
 
-.ownweb-feedback-save-status {
+.weblayer-feedback-save-status {
   flex: 0 0 auto;
   margin-left: auto;
   color: rgb(113, 118, 123);
@@ -121,19 +121,19 @@
   white-space: nowrap;
 }
 
-.ownweb-feedback-panel[data-ownweb-save-state="saving"] .ownweb-feedback-save-status {
+.weblayer-feedback-panel[data-weblayer-save-state="saving"] .weblayer-feedback-save-status {
   color: rgb(29, 155, 240);
 }
 
-.ownweb-feedback-panel[data-ownweb-save-state="saved"] .ownweb-feedback-save-status {
+.weblayer-feedback-panel[data-weblayer-save-state="saved"] .weblayer-feedback-save-status {
   color: rgb(0, 186, 124);
 }
 
-.ownweb-feedback-panel[data-ownweb-save-state="error"] .ownweb-feedback-save-status {
+.weblayer-feedback-panel[data-weblayer-save-state="error"] .weblayer-feedback-save-status {
   color: rgb(244, 33, 46);
 }
 
-.ownweb-feedback-reason-chips {
+.weblayer-feedback-reason-chips {
   display: flex;
   flex: 1 1 220px;
   flex-wrap: wrap;
@@ -141,7 +141,7 @@
   min-width: 0;
 }
 
-.ownweb-feedback-reason-chip {
+.weblayer-feedback-reason-chip {
   display: inline-flex;
   align-items: center;
   min-height: 26px;
@@ -156,19 +156,19 @@
   white-space: nowrap;
 }
 
-.ownweb-feedback-reason-chip:hover,
-.ownweb-feedback-reason-chip:focus-visible,
-.ownweb-feedback-reason-chip--selected {
+.weblayer-feedback-reason-chip:hover,
+.weblayer-feedback-reason-chip:focus-visible,
+.weblayer-feedback-reason-chip--selected {
   border-color: rgb(244, 33, 46);
   color: rgb(244, 33, 46);
   outline: none;
 }
 
-.ownweb-feedback-reason-chip--selected {
+.weblayer-feedback-reason-chip--selected {
   background: rgba(244, 33, 46, 0.12);
 }
 
-.ownweb-feedback-reason-input {
+.weblayer-feedback-reason-input {
   flex: 1 1 100%;
   min-width: 0;
   max-width: 100%;
@@ -183,11 +183,11 @@
   resize: vertical;
 }
 
-.ownweb-feedback-reason-input:focus {
+.weblayer-feedback-reason-input:focus {
   border-color: rgb(29, 155, 240);
   outline: none;
 }
 
-.ownweb-replaced {
+.weblayer-replaced {
   color: #536471 !important;
 }

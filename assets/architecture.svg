@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="920" height="240" viewBox="0 0 920 240" role="img" aria-labelledby="title desc">
-  <title id="title">OwnWeb architecture</title>
+  <title id="title">WebLayer architecture</title>
   <desc id="desc">Browser sends content to the extension, which sends it to the daemon. The daemon uses AI agents and a content store.</desc>
   <defs>
     <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">

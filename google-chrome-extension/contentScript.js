@@ -37,11 +37,11 @@ observer.observe(document.documentElement, {
   characterData: true
 });
 
-document.addEventListener("click", handleOwnWebClick, true);
-document.addEventListener("pointerdown", handleOwnWebPointerDown, true);
+document.addEventListener("click", handleWebLayerClick, true);
+document.addEventListener("pointerdown", handleWebLayerPointerDown, true);
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-  if (!message || message.type !== "ownweb:applyCommands") {
+  if (!message || message.type !== "weblayer:applyCommands") {
     return false;
   }
 
@@ -68,19 +68,19 @@ function scanForRegions() {
       continue;
     }
 
-    if (element.dataset.ownwebSnapshotHash === snapshot.snapshotHash) {
+    if (element.dataset.weblayerSnapshotHash === snapshot.snapshotHash) {
       continue;
     }
 
     if (
-      element.dataset.ownwebKeepVisibleAfterFeedbackHash &&
-      element.dataset.ownwebKeepVisibleAfterFeedbackHash !== snapshot.snapshotHash
+      element.dataset.weblayerKeepVisibleAfterFeedbackHash &&
+      element.dataset.weblayerKeepVisibleAfterFeedbackHash !== snapshot.snapshotHash
     ) {
-      delete element.dataset.ownwebKeepVisibleAfterFeedbackHash;
+      delete element.dataset.weblayerKeepVisibleAfterFeedbackHash;
     }
 
-    element.dataset.ownwebSnapshotHash = snapshot.snapshotHash;
-    element.dataset.ownwebState = "queued";
+    element.dataset.weblayerSnapshotHash = snapshot.snapshotHash;
+    element.dataset.weblayerState = "queued";
     elementsByClientId.set(snapshot.clientId, element);
     snapshotsByClientId.set(snapshot.clientId, snapshot);
     queuedSnapshots.push(snapshot);
@@ -186,11 +186,11 @@ function snapshotElement(element) {
 
 function cloneForSnapshot(element) {
   const clone = element.cloneNode(true);
-  for (const ownwebElement of clone.querySelectorAll(".ownweb-badge")) {
-    ownwebElement.remove();
+  for (const weblayerElement of clone.querySelectorAll(".weblayer-badge")) {
+    weblayerElement.remove();
   }
-  for (const ownwebElement of clone.querySelectorAll("[data-ownweb-ui='true']")) {
-    ownwebElement.remove();
+  for (const weblayerElement of clone.querySelectorAll("[data-weblayer-ui='true']")) {
+    weblayerElement.remove();
   }
   return clone;
 }
@@ -208,7 +208,7 @@ function snapshotLinks(root) {
 
 function snapshotAttributes(element) {
   return Array.from(element.attributes)
-    .filter((attribute) => !attribute.name.startsWith("data-ownweb"))
+    .filter((attribute) => !attribute.name.startsWith("data-weblayer"))
     .slice(0, MAX_ATTRIBUTES)
     .map((attribute) => ({
       name: attribute.name,
@@ -248,12 +248,12 @@ async function flushQueue() {
     for (const snapshot of batch) {
       const element = elementsByClientId.get(snapshot.clientId);
       if (element) {
-        element.dataset.ownwebState = "pending";
+        element.dataset.weblayerState = "pending";
       }
     }
 
     const response = await sendMessage({
-      type: "ownweb:analyzeDom",
+      type: "weblayer:analyzeDom",
       page: pageSnapshot(),
       elements: batch
     });
@@ -300,24 +300,24 @@ function applyCommands(commands) {
     }
 
     if (command.action === "hide" && shouldKeepVisibleAfterFeedback(element, command)) {
-      element.dataset.ownwebState = "feedbackActive";
+      element.dataset.weblayerState = "feedbackActive";
       continue;
     }
 
-    clearOwnWebChanges(element);
-    element.dataset.ownwebState = command.action || "keep";
+    clearWebLayerChanges(element);
+    element.dataset.weblayerState = command.action || "keep";
 
     if (command.action === "keep") {
       continue;
     }
 
     if (command.action === "hide") {
-      element.classList.add("ownweb-hidden");
+      element.classList.add("weblayer-hidden");
       continue;
     }
 
     if (command.action === "dim") {
-      element.classList.add("ownweb-dimmed");
+      element.classList.add("weblayer-dimmed");
       insertBadge(element, command);
       continue;
     }
@@ -334,9 +334,9 @@ function applyCommands(commands) {
   }
 }
 
-function handleOwnWebClick(event) {
+function handleWebLayerClick(event) {
   const target = eventTargetElement(event);
-  const button = target ? target.closest(".ownweb-feedback-button") : null;
+  const button = target ? target.closest(".weblayer-feedback-button") : null;
   if (!button) {
     return;
   }
@@ -345,7 +345,7 @@ function handleOwnWebClick(event) {
   event.stopPropagation();
   event.stopImmediatePropagation();
 
-  const clientId = button.dataset.ownwebClientId || "";
+  const clientId = button.dataset.weblayerClientId || "";
   const element = elementsByClientId.get(clientId);
   if (!element || button.disabled) {
     return;
@@ -354,16 +354,16 @@ function handleOwnWebClick(event) {
   void toggleFeedback(element, button);
 }
 
-function handleOwnWebPointerDown(event) {
+function handleWebLayerPointerDown(event) {
   const target = eventTargetElement(event);
-  const button = target ? target.closest(".ownweb-feedback-button") : null;
-  if (!button || !button.classList.contains("ownweb-feedback-button--active")) {
+  const button = target ? target.closest(".weblayer-feedback-button") : null;
+  if (!button || !button.classList.contains("weblayer-feedback-button--active")) {
     return;
   }
 
-  button.dataset.ownwebSkipNextReasonBlur = "true";
+  button.dataset.weblayerSkipNextReasonBlur = "true";
   setTimeout(() => {
-    delete button.dataset.ownwebSkipNextReasonBlur;
+    delete button.dataset.weblayerSkipNextReasonBlur;
   }, 300);
 }
 
@@ -378,29 +378,29 @@ function eventTargetElement(event) {
 }
 
 async function toggleFeedback(element, button) {
-  const wasActive = button.classList.contains("ownweb-feedback-button--active");
+  const wasActive = button.classList.contains("weblayer-feedback-button--active");
 
   if (!wasActive) {
     markKeepVisibleAfterFeedback(element);
-    button.dataset.ownwebFeedbackPersisted = "false";
+    button.dataset.weblayerFeedbackPersisted = "false";
     setFeedbackButtonActive(button, true);
     showFeedbackReasonPanel(element, button);
     return;
   }
 
   const panel = wasActive
-    ? feedbackReasonPanel(element, button.dataset.ownwebClientId || "")
+    ? feedbackReasonPanel(element, button.dataset.weblayerClientId || "")
     : null;
-  const persisted = button.dataset.ownwebFeedbackPersisted === "true";
+  const persisted = button.dataset.weblayerFeedbackPersisted === "true";
   const reason = currentFeedbackReason(element, button);
 
   if (panel) {
     cancelScheduledReasonUpdate(panel);
-    panel.dataset.ownwebClosing = "true";
+    panel.dataset.weblayerClosing = "true";
   }
 
   button.disabled = true;
-  button.dataset.ownwebFeedbackState = "pending";
+  button.dataset.weblayerFeedbackState = "pending";
 
   try {
     if (persisted) {
@@ -414,16 +414,16 @@ async function toggleFeedback(element, button) {
     }
 
     clearKeepVisibleAfterFeedback(element);
-    delete button.dataset.ownwebFeedbackPersisted;
+    delete button.dataset.weblayerFeedbackPersisted;
     setFeedbackButtonActive(button, false);
-    removeFeedbackReasonPanel(element, button.dataset.ownwebClientId || "");
+    removeFeedbackReasonPanel(element, button.dataset.weblayerClientId || "");
   } catch (error) {
     if (panel) {
-      delete panel.dataset.ownwebClosing;
+      delete panel.dataset.weblayerClosing;
       setFeedbackSaveStatus(panel, "Undo failed", "error");
     }
-    button.dataset.ownwebFeedbackState = wasActive ? "active" : "unavailable";
-    button.title = `OwnWeb feedback unavailable: ${
+    button.dataset.weblayerFeedbackState = wasActive ? "active" : "unavailable";
+    button.title = `WebLayer feedback unavailable: ${
       error instanceof Error ? error.message : String(error)
     }`;
   } finally {
@@ -438,7 +438,7 @@ async function sendFeedbackEvent(element, feedback, reason) {
   }
 
   return sendMessage({
-    type: "ownweb:feedback",
+    type: "weblayer:feedback",
     feedback,
     reason,
     page: pageSnapshot(),
@@ -448,8 +448,8 @@ async function sendFeedbackEvent(element, feedback, reason) {
 
 function setFeedbackButtonActive(button, active) {
   const label = active ? "Undo thumbs-down feedback" : "Hide this post";
-  button.classList.toggle("ownweb-feedback-button--active", active);
-  button.dataset.ownwebFeedbackState = active ? "active" : "idle";
+  button.classList.toggle("weblayer-feedback-button--active", active);
+  button.dataset.weblayerFeedbackState = active ? "active" : "idle";
   button.title = label;
   button.setAttribute("aria-label", label);
   button.setAttribute("aria-pressed", active ? "true" : "false");
@@ -458,12 +458,12 @@ function setFeedbackButtonActive(button, active) {
 function markKeepVisibleAfterFeedback(element) {
   const snapshot = snapshotElement(element);
   if (snapshot && snapshot.snapshotHash) {
-    element.dataset.ownwebKeepVisibleAfterFeedbackHash = snapshot.snapshotHash;
+    element.dataset.weblayerKeepVisibleAfterFeedbackHash = snapshot.snapshotHash;
   }
 }
 
 function clearKeepVisibleAfterFeedback(element) {
-  delete element.dataset.ownwebKeepVisibleAfterFeedbackHash;
+  delete element.dataset.weblayerKeepVisibleAfterFeedbackHash;
 }
 
 function shouldKeepVisibleAfterFeedback(element, command) {
@@ -471,7 +471,7 @@ function shouldKeepVisibleAfterFeedback(element, command) {
     return true;
   }
 
-  const keepVisibleHash = element.dataset.ownwebKeepVisibleAfterFeedbackHash;
+  const keepVisibleHash = element.dataset.weblayerKeepVisibleAfterFeedbackHash;
   if (!keepVisibleHash) {
     return false;
   }
@@ -487,20 +487,20 @@ function shouldKeepVisibleAfterFeedback(element, command) {
 
 function hasActiveFeedbackSession(element) {
   return (
-    element.querySelector(".ownweb-feedback-panel") !== null ||
-    element.querySelector(".ownweb-feedback-button--active") !== null
+    element.querySelector(".weblayer-feedback-panel") !== null ||
+    element.querySelector(".weblayer-feedback-button--active") !== null
   );
 }
 
 function showFeedbackReasonPanel(element, button) {
-  const clientId = button.dataset.ownwebClientId || "";
+  const clientId = button.dataset.weblayerClientId || "";
   if (!clientId) {
     return;
   }
 
   const existingPanel = feedbackReasonPanel(element, clientId);
   if (existingPanel) {
-    const input = existingPanel.querySelector(".ownweb-feedback-reason-input");
+    const input = existingPanel.querySelector(".weblayer-feedback-reason-input");
     if (input instanceof HTMLElement) {
       input.focus();
     }
@@ -515,44 +515,44 @@ function showFeedbackReasonPanel(element, button) {
   const panel = createFeedbackReasonPanel(element, button);
   actionBar.insertAdjacentElement("afterend", panel);
 
-  const input = panel.querySelector(".ownweb-feedback-reason-input");
+  const input = panel.querySelector(".weblayer-feedback-reason-input");
   if (input instanceof HTMLElement) {
     input.focus();
   }
 }
 
 function createFeedbackReasonPanel(element, button) {
-  const clientId = button.dataset.ownwebClientId || "";
+  const clientId = button.dataset.weblayerClientId || "";
   const panel = document.createElement("div");
   const label = document.createElement("div");
   const status = document.createElement("div");
   const chips = document.createElement("div");
   const input = document.createElement("textarea");
 
-  panel.className = "ownweb-feedback-panel";
-  panel.dataset.ownwebUi = "true";
-  panel.dataset.ownwebClientId = clientId;
-  panel.dataset.ownwebSavedReason = "";
-  panel.dataset.ownwebSaveState = "idle";
+  panel.className = "weblayer-feedback-panel";
+  panel.dataset.weblayerUi = "true";
+  panel.dataset.weblayerClientId = clientId;
+  panel.dataset.weblayerSavedReason = "";
+  panel.dataset.weblayerSaveState = "idle";
 
-  label.className = "ownweb-feedback-panel-label";
-  label.dataset.ownwebUi = "true";
+  label.className = "weblayer-feedback-panel-label";
+  label.dataset.weblayerUi = "true";
   label.textContent = "Reason";
 
-  status.className = "ownweb-feedback-save-status";
-  status.dataset.ownwebUi = "true";
+  status.className = "weblayer-feedback-save-status";
+  status.dataset.weblayerUi = "true";
   status.setAttribute("role", "status");
   status.setAttribute("aria-live", "polite");
   status.textContent = "Add a reason";
 
-  chips.className = "ownweb-feedback-reason-chips";
-  chips.dataset.ownwebUi = "true";
+  chips.className = "weblayer-feedback-reason-chips";
+  chips.dataset.weblayerUi = "true";
   for (const reason of FEEDBACK_REASON_PRESETS) {
     const chip = document.createElement("button");
     chip.type = "button";
-    chip.className = "ownweb-feedback-reason-chip";
-    chip.dataset.ownwebUi = "true";
-    chip.dataset.ownwebReason = reason;
+    chip.className = "weblayer-feedback-reason-chip";
+    chip.dataset.weblayerUi = "true";
+    chip.dataset.weblayerReason = reason;
     chip.textContent = reason;
     chip.setAttribute("aria-pressed", "false");
     chip.addEventListener("click", (event) => {
@@ -567,8 +567,8 @@ function createFeedbackReasonPanel(element, button) {
     chips.append(chip);
   }
 
-  input.className = "ownweb-feedback-reason-input";
-  input.dataset.ownwebUi = "true";
+  input.className = "weblayer-feedback-reason-input";
+  input.dataset.weblayerUi = "true";
   input.rows = 2;
   input.placeholder = "Add a reason";
   input.addEventListener("click", (event) => {
@@ -582,7 +582,7 @@ function createFeedbackReasonPanel(element, button) {
     scheduleReasonUpdate(element, button, panel);
   });
   input.addEventListener("blur", () => {
-    if (button.dataset.ownwebSkipNextReasonBlur === "true") {
+    if (button.dataset.weblayerSkipNextReasonBlur === "true") {
       return;
     }
 
@@ -606,8 +606,8 @@ function stopPanelEvent(event) {
 
 function scheduleReasonUpdate(element, button, panel, options = {}) {
   if (
-    !button.classList.contains("ownweb-feedback-button--active") ||
-    panel.dataset.ownwebClosing === "true"
+    !button.classList.contains("weblayer-feedback-button--active") ||
+    panel.dataset.weblayerClosing === "true"
   ) {
     return;
   }
@@ -621,7 +621,7 @@ function scheduleReasonUpdate(element, button, panel, options = {}) {
     return;
   }
 
-  if ((panel.dataset.ownwebSavedReason || "") === reason) {
+  if ((panel.dataset.weblayerSavedReason || "") === reason) {
     setFeedbackSaveStatus(panel, "Saved", "saved");
     return;
   }
@@ -653,19 +653,19 @@ function cancelScheduledReasonUpdate(panel) {
 }
 
 async function sendReasonUpdate(element, button, panel, reason) {
-  if (panel.dataset.ownwebClosing === "true" || !reason) {
+  if (panel.dataset.weblayerClosing === "true" || !reason) {
     return;
   }
 
   const requestId = String(nextFeedbackSaveId);
   nextFeedbackSaveId += 1;
   const previousTitle = button.title;
-  const feedback = button.dataset.ownwebFeedbackPersisted === "true"
+  const feedback = button.dataset.weblayerFeedbackPersisted === "true"
     ? "updateReason"
     : "thumbsDown";
-  panel.dataset.ownwebSaveRequestId = requestId;
+  panel.dataset.weblayerSaveRequestId = requestId;
   button.disabled = true;
-  button.dataset.ownwebFeedbackState = "pending";
+  button.dataset.weblayerFeedbackState = "pending";
   setFeedbackSaveStatus(panel, "Saving...", "saving");
 
   try {
@@ -675,45 +675,45 @@ async function sendReasonUpdate(element, button, panel, reason) {
     }
 
     applyCommands(response.commands || []);
-    if (!panel.isConnected || panel.dataset.ownwebClosing === "true") {
+    if (!panel.isConnected || panel.dataset.weblayerClosing === "true") {
       return;
     }
     if (
-      panel.dataset.ownwebSaveRequestId !== requestId ||
+      panel.dataset.weblayerSaveRequestId !== requestId ||
       currentPanelReason(panel) !== reason
     ) {
       return;
     }
 
-    panel.dataset.ownwebSavedReason = reason;
-    button.dataset.ownwebFeedbackPersisted = "true";
+    panel.dataset.weblayerSavedReason = reason;
+    button.dataset.weblayerFeedbackPersisted = "true";
     setFeedbackSaveStatus(panel, `Saved ${shortTime(new Date())}`, "saved");
-    if (button.classList.contains("ownweb-feedback-button--active")) {
-      button.dataset.ownwebFeedbackState = "active";
+    if (button.classList.contains("weblayer-feedback-button--active")) {
+      button.dataset.weblayerFeedbackState = "active";
     }
   } catch (error) {
     if (
       panel.isConnected &&
-      panel.dataset.ownwebSaveRequestId === requestId &&
-      panel.dataset.ownwebClosing !== "true"
+      panel.dataset.weblayerSaveRequestId === requestId &&
+      panel.dataset.weblayerClosing !== "true"
     ) {
       setFeedbackSaveStatus(panel, "Save failed", "error");
     }
 
-    button.dataset.ownwebFeedbackState = "active";
-    button.title = `OwnWeb feedback unavailable: ${
+    button.dataset.weblayerFeedbackState = "active";
+    button.title = `WebLayer feedback unavailable: ${
       error instanceof Error ? error.message : String(error)
     }`;
     setTimeout(() => {
-      if (button.dataset.ownwebFeedbackState === "active") {
+      if (button.dataset.weblayerFeedbackState === "active") {
         button.title = previousTitle;
       }
     }, 2500);
   } finally {
     if (
       panel.isConnected &&
-      panel.dataset.ownwebSaveRequestId === requestId &&
-      panel.dataset.ownwebClosing !== "true"
+      panel.dataset.weblayerSaveRequestId === requestId &&
+      panel.dataset.weblayerClosing !== "true"
     ) {
       button.disabled = false;
     }
@@ -721,21 +721,21 @@ async function sendReasonUpdate(element, button, panel, reason) {
 }
 
 function currentPanelReason(panel) {
-  const input = panel.querySelector(".ownweb-feedback-reason-input");
+  const input = panel.querySelector(".weblayer-feedback-reason-input");
   return input instanceof HTMLTextAreaElement ? input.value.trim() : "";
 }
 
 function updateSelectedReasonChip(panel, reason) {
-  for (const chip of panel.querySelectorAll(".ownweb-feedback-reason-chip")) {
-    const selected = chip.dataset.ownwebReason === reason;
-    chip.classList.toggle("ownweb-feedback-reason-chip--selected", selected);
+  for (const chip of panel.querySelectorAll(".weblayer-feedback-reason-chip")) {
+    const selected = chip.dataset.weblayerReason === reason;
+    chip.classList.toggle("weblayer-feedback-reason-chip--selected", selected);
     chip.setAttribute("aria-pressed", selected ? "true" : "false");
   }
 }
 
 function setFeedbackSaveStatus(panel, text, state) {
-  panel.dataset.ownwebSaveState = state;
-  const status = panel.querySelector(".ownweb-feedback-save-status");
+  panel.dataset.weblayerSaveState = state;
+  const status = panel.querySelector(".weblayer-feedback-save-status");
   if (status) {
     status.textContent = text;
   }
@@ -749,9 +749,9 @@ function shortTime(date) {
 }
 
 function currentFeedbackReason(element, button) {
-  const clientId = button.dataset.ownwebClientId || "";
+  const clientId = button.dataset.weblayerClientId || "";
   const panel = feedbackReasonPanel(element, clientId);
-  const input = panel && panel.querySelector(".ownweb-feedback-reason-input");
+  const input = panel && panel.querySelector(".weblayer-feedback-reason-input");
   return input instanceof HTMLTextAreaElement ? input.value.trim() : "";
 }
 
@@ -761,7 +761,7 @@ function feedbackReasonPanel(element, clientId) {
   }
 
   return element.querySelector(
-    `.ownweb-feedback-panel[data-ownweb-client-id="${cssEscape(clientId)}"]`
+    `.weblayer-feedback-panel[data-weblayer-client-id="${cssEscape(clientId)}"]`
   );
 }
 
@@ -805,36 +805,36 @@ function targetStillMatches(element, target) {
   return snapshot && snapshot.snapshotHash === target.mustMatchSnapshotHash;
 }
 
-function clearOwnWebChanges(element) {
-  element.classList.remove("ownweb-hidden", "ownweb-dimmed", "ownweb-replaced");
+function clearWebLayerChanges(element) {
+  element.classList.remove("weblayer-hidden", "weblayer-dimmed", "weblayer-replaced");
 
-  const badge = element.querySelector(":scope > .ownweb-badge");
+  const badge = element.querySelector(":scope > .weblayer-badge");
   if (badge) {
     badge.remove();
   }
 
-  if (element.dataset.ownwebOriginalText) {
-    element.innerText = element.dataset.ownwebOriginalText;
-    delete element.dataset.ownwebOriginalText;
+  if (element.dataset.weblayerOriginalText) {
+    element.innerText = element.dataset.weblayerOriginalText;
+    delete element.dataset.weblayerOriginalText;
   }
 }
 
 function replaceRegionText(element, replacementText) {
-  element.dataset.ownwebOriginalText = element.innerText;
+  element.dataset.weblayerOriginalText = element.innerText;
   element.innerText = replacementText;
-  element.classList.add("ownweb-replaced");
+  element.classList.add("weblayer-replaced");
 }
 
 function insertBadge(element, command) {
-  const badgeText = command.label || command.reason || "OwnWeb";
+  const badgeText = command.label || command.reason || "WebLayer";
   const badge = document.createElement("div");
   const text = document.createElement("span");
 
-  badge.className = "ownweb-badge";
-  badge.dataset.ownwebUi = "true";
+  badge.className = "weblayer-badge";
+  badge.dataset.weblayerUi = "true";
 
-  text.className = "ownweb-badge-text";
-  text.dataset.ownwebUi = "true";
+  text.className = "weblayer-badge-text";
+  text.dataset.weblayerUi = "true";
   text.textContent = badgeText;
 
   badge.append(text);
@@ -847,10 +847,10 @@ function insertFeedbackControl(element, command) {
     : getClientId(element);
   const isSubjectPost = isSubjectPostElement(element, clientId);
   const existingButton = element.querySelector(
-    `.ownweb-feedback-button[data-ownweb-client-id="${cssEscape(clientId)}"]`
+    `.weblayer-feedback-button[data-weblayer-client-id="${cssEscape(clientId)}"]`
   );
   if (existingButton) {
-    existingButton.classList.toggle("ownweb-feedback-button--subject", isSubjectPost);
+    existingButton.classList.toggle("weblayer-feedback-button--subject", isSubjectPost);
     if (!existingButton.hasAttribute("aria-pressed")) {
       existingButton.setAttribute("aria-pressed", "false");
     }
@@ -864,7 +864,7 @@ function insertFeedbackControl(element, command) {
 
   const likeSlot = findActionSlot(actionBar, "[data-testid='like'], [data-testid='unlike']");
   const slot = createFeedbackSlot(likeSlot || actionBar.firstElementChild);
-  slot.dataset.ownwebUi = "true";
+  slot.dataset.weblayerUi = "true";
   slot.append(createFeedbackButton(clientId, command.label || "Hide this post", isSubjectPost));
 
   if (likeSlot && likeSlot.parentElement === actionBar && likeSlot.nextSibling) {
@@ -884,20 +884,20 @@ function createFeedbackSlot(referenceSlot) {
     ? referenceSlot.className
     : "";
   slot.className = referenceClass
-    ? `${referenceClass} ownweb-feedback-slot`
-    : "ownweb-feedback-slot";
+    ? `${referenceClass} weblayer-feedback-slot`
+    : "weblayer-feedback-slot";
   return slot;
 }
 
 function createFeedbackButton(clientId, label, isSubjectPost) {
   const button = document.createElement("button");
   button.type = "button";
-  button.className = "ownweb-feedback-button";
-  button.classList.toggle("ownweb-feedback-button--subject", isSubjectPost);
-  button.dataset.ownwebUi = "true";
-  button.dataset.ownwebClientId = clientId;
-  button.dataset.ownwebFeedback = "thumbsDown";
-  button.dataset.ownwebFeedbackState = "idle";
+  button.className = "weblayer-feedback-button";
+  button.classList.toggle("weblayer-feedback-button--subject", isSubjectPost);
+  button.dataset.weblayerUi = "true";
+  button.dataset.weblayerClientId = clientId;
+  button.dataset.weblayerFeedback = "thumbsDown";
+  button.dataset.weblayerFeedbackState = "idle";
   button.title = label;
   button.setAttribute("aria-label", label);
   button.setAttribute("aria-pressed", "false");
@@ -943,7 +943,7 @@ function createThumbsDownIcon() {
 
   svg.setAttribute("viewBox", "0 0 24 24");
   svg.setAttribute("aria-hidden", "true");
-  svg.setAttribute("class", "ownweb-feedback-icon");
+  svg.setAttribute("class", "weblayer-feedback-icon");
   path.setAttribute(
     "d",
     "M10 15v4a3 3 0 0 0 3 3l4-9V2H5.7a2 2 0 0 0-2 1.7l-1.4 9A2 2 0 0 0 4.3 15H10Zm7-13h2.7A2.3 2.3 0 0 1 22 4.3v6.4a2.3 2.3 0 0 1-2.3 2.3H17V2Z"
@@ -986,8 +986,8 @@ function markBatchUnavailable(batch, error) {
       continue;
     }
 
-    element.dataset.ownwebState = "unavailable";
-    element.title = `OwnWeb daemon unavailable: ${
+    element.dataset.weblayerState = "unavailable";
+    element.title = `WebLayer daemon unavailable: ${
       error instanceof Error ? error.message : String(error)
     }`;
   }

@@ -1,7 +1,7 @@
-# OwnWeb Rules
+# WebLayer Rules
 
 Content rules are stored as site-scoped policy records in the site database.
-For X, rules live in `~/.local/share/ownweb/x.com/db.sqlite` in the
+For X, rules live in `~/.local/share/weblayer/x.com/db.sqlite` in the
 `content_rules` table.
 
 The daemon currently seeds one active X rule:

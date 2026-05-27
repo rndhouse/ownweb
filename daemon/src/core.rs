@@ -267,7 +267,7 @@ impl DomCommand {
 #[derive(Debug, Clone, Copy, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum DomCommandAction {
-    /// Remove OwnWeb modifications and leave the region visible.
+    /// Remove WebLayer modifications and leave the region visible.
     Keep,
     /// Hide the region.
     Hide,

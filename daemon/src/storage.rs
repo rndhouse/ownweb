@@ -11,8 +11,8 @@ use std::{
 };
 use tracing::{info, warn};
 
-const DATA_DIR_ENV: &str = "OWNWEB_DATA_DIR";
-const RESET_X_DB_ENV: &str = "OWNWEB_X_RESET_DB";
+const DATA_DIR_ENV: &str = "WEBLAYER_DATA_DIR";
+const RESET_X_DB_ENV: &str = "WEBLAYER_X_RESET_DB";
 const DB_FILE_NAME: &str = "db.sqlite";
 const DEFAULT_RULE_LIMIT: usize = 100;
 
@@ -60,7 +60,7 @@ pub struct XDislikePage {
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct XDislikedPost {
-    /// Stable storage key used by OwnWeb.
+    /// Stable storage key used by WebLayer.
     pub storage_key: String,
     /// X status ID when known.
     pub post_id: Option<String>,
@@ -139,7 +139,7 @@ pub struct ContentPage {
 pub struct StoredContentItem {
     /// Logical content kind, such as `post`.
     pub content_kind: String,
-    /// Stable storage key used by OwnWeb.
+    /// Stable storage key used by WebLayer.
     pub storage_key: String,
     /// Stable source content ID when known.
     pub content_id: Option<String>,
@@ -221,7 +221,7 @@ pub struct ContentAnnotationPage {
 pub struct ContentAnnotation {
     /// Database row ID for this annotation.
     pub id: i64,
-    /// Stable storage key used by OwnWeb.
+    /// Stable storage key used by WebLayer.
     pub storage_key: String,
     /// Logical content kind, such as `post`.
     pub content_kind: String,
@@ -449,7 +449,7 @@ fn data_dir_from_env() -> Result<PathBuf> {
     }
 
     if let Some(home) = non_empty_env("HOME") {
-        return Ok(PathBuf::from(home).join(".local/share/ownweb"));
+        return Ok(PathBuf::from(home).join(".local/share/weblayer"));
     }
 
     Err(StorageError::MissingDataDir)
@@ -496,7 +496,7 @@ type Result<T> = std::result::Result<T, StorageError>;
 /// Error returned by the filesystem-backed content store.
 #[derive(Debug)]
 pub enum StorageError {
-    /// No data directory could be determined from `OWNWEB_DATA_DIR` or `HOME`.
+    /// No data directory could be determined from `WEBLAYER_DATA_DIR` or `HOME`.
     MissingDataDir,
     /// Filesystem setup failed.
     Io(std::io::Error),
@@ -511,7 +511,7 @@ impl fmt::Display for StorageError {
         match self {
             Self::MissingDataDir => write!(
                 formatter,
-                "missing data directory; set OWNWEB_DATA_DIR or HOME"
+                "missing data directory; set WEBLAYER_DATA_DIR or HOME"
             ),
             Self::Io(error) => write!(formatter, "filesystem error: {error}"),
             Self::Sqlite(error) => write!(formatter, "sqlite error: {error}"),
@@ -561,8 +561,10 @@ mod tests {
     }
 
     fn temp_data_dir(name: &str) -> PathBuf {
-        let path =
-            std::env::temp_dir().join(format!("ownweb-storage-test-{name}-{}", std::process::id()));
+        let path = std::env::temp_dir().join(format!(
+            "weblayer-storage-test-{name}-{}",
+            std::process::id()
+        ));
         let _ = std::fs::remove_dir_all(&path);
         path
     }

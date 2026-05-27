@@ -10,7 +10,7 @@ use std::{
 use summary_cache::SummaryCache;
 use tracing::{debug, warn, Level};
 
-const CODEX_ENABLED_ENV: &str = "OWNWEB_CODEX_APP_ENABLED";
+const CODEX_ENABLED_ENV: &str = "WEBLAYER_CODEX_APP_ENABLED";
 
 /// Shared AI analyzer used by site handlers.
 #[derive(Clone)]
@@ -149,13 +149,13 @@ impl AiAnalyzer {
 }
 
 fn debug_x_agent_query_item(item: &ContentItem) {
-    if !tracing::enabled!(target: "ownweb_daemon::ai", Level::DEBUG) {
+    if !tracing::enabled!(target: "weblayer_daemon::ai", Level::DEBUG) {
         return;
     }
 
     if let Ok(post_json) = serde_json::to_string(item) {
         debug!(
-            target: "ownweb_daemon::ai",
+            target: "weblayer_daemon::ai",
             client_id = item.client_id.as_str(),
             content_id = item.content_id.as_deref(),
             url = item.url.as_deref(),
