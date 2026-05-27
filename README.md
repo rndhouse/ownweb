@@ -5,7 +5,7 @@
 WebLayer helps you take sovereignty over the web you consume. It sends page content from your browser to a local daemon, where your own rules and AI agents can learn from your feedback, hide what you do not want to see, and keep relevant browsing data under your control.
 
 <p align="center">
-  <img src="assets/architecture.svg" alt="Browser to extension to daemon, with AI agents and content store connected to the daemon" width="720">
+  <img src="assets/architecture.svg" alt="Browser to WebLayer extension to WebLayer daemon, with an AI agent and content store connected to the daemon" width="720">
 </p>
 
 ## Supported Sites
