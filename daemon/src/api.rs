@@ -53,7 +53,8 @@ pub fn router() -> Result<Router, StorageError> {
             get(content_annotations).post(upsert_content_annotation),
         )
         .route("/v1/content/stats", get(content_stats))
-        .route("/v1/dislikes", get(dislikes))
+        .route("/v1/feedback", get(feedback))
+        .route("/v1/dislikes", get(feedback))
         .route("/v1/rules", get(rules))
         .with_state(state)
         .layer(cors_layer()))
@@ -119,10 +120,10 @@ async fn dom_feedback(
     })
 }
 
-async fn dislikes(
+async fn feedback(
     State(state): State<AppState>,
-    Query(query): Query<DislikesQuery>,
-) -> Result<Json<DislikesResponse>, ApiError> {
+    Query(query): Query<FeedbackQuery>,
+) -> Result<Json<FeedbackResponse>, ApiError> {
     let site = SiteScope::from_param(query.site.as_deref())?;
     let active = query.active.or(Some(true));
     let limit = query
@@ -138,7 +139,7 @@ async fn dislikes(
         })?,
     };
 
-    Ok(Json(DislikesResponse {
+    Ok(Json(FeedbackResponse {
         site: site.as_str(),
         active,
         total_matching: page.total_matching,
@@ -617,10 +618,10 @@ struct UpsertContentAnnotationResponse {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct DislikesQuery {
+struct FeedbackQuery {
     /// Site scope for the request, such as `x.com`.
     site: Option<String>,
-    /// Filter by current active dislike state. Defaults to active dislikes.
+    /// Filter by current active feedback state. Defaults to active feedback.
     active: Option<bool>,
     /// Maximum number of rows to return. Defaults to 100 and is capped at 500.
     limit: Option<usize>,
@@ -630,7 +631,7 @@ struct DislikesQuery {
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct DislikesResponse {
+struct FeedbackResponse {
     site: &'static str,
     active: Option<bool>,
     total_matching: usize,

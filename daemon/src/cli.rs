@@ -51,7 +51,9 @@ impl Cli {
             Some(Command::Status) | Some(Command::Daemon) | None => ClientCommand::Status,
             Some(Command::Rules(command)) => ClientCommand::Rules(command),
             Some(Command::Content(command)) => ClientCommand::Content(command),
-            Some(Command::Dislikes(command)) => ClientCommand::Dislikes(command),
+            Some(Command::Feedback(command)) | Some(Command::Dislikes(command)) => {
+                ClientCommand::Feedback(command)
+            }
             Some(Command::Annotations(command)) => ClientCommand::Annotations(command),
         }
     }
@@ -75,7 +77,7 @@ pub async fn run_client(cli: &Cli) -> CliResult<()> {
         ClientCommand::Status => run_status(&client).await,
         ClientCommand::Rules(command) => run_rules(&client, command).await,
         ClientCommand::Content(command) => run_content(&client, command).await,
-        ClientCommand::Dislikes(command) => run_dislikes(&client, command).await,
+        ClientCommand::Feedback(command) => run_feedback(&client, command).await,
         ClientCommand::Annotations(command) => run_annotations(&client, command).await,
     }
 }
@@ -90,8 +92,10 @@ enum Command {
     Rules(RulesCommand),
     /// List, search, or summarize stored content.
     Content(ContentCommand),
-    /// List stored dislike feedback.
-    Dislikes(DislikesCommand),
+    /// List stored feedback.
+    Feedback(FeedbackCommand),
+    #[command(hide = true)]
+    Dislikes(FeedbackCommand),
     /// List or upsert content annotations.
     Annotations(AnnotationsCommand),
 }
@@ -188,24 +192,24 @@ struct ContentStatsArgs {
 }
 
 #[derive(Debug, Clone, Args)]
-struct DislikesCommand {
+struct FeedbackCommand {
     #[command(subcommand)]
-    command: Option<DislikesSubcommand>,
+    command: Option<FeedbackSubcommand>,
 }
 
 #[derive(Debug, Clone, Subcommand)]
-enum DislikesSubcommand {
-    /// List stored dislike feedback.
-    List(DislikesListArgs),
+enum FeedbackSubcommand {
+    /// List stored feedback.
+    List(FeedbackListArgs),
 }
 
 #[derive(Debug, Clone, Args)]
-struct DislikesListArgs {
+struct FeedbackListArgs {
     /// Site scope to inspect.
     #[arg(long, default_value = DEFAULT_SITE)]
     site: String,
     /// Filter by current active state.
-    #[arg(long, default_value_t = true)]
+    #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
     active: bool,
     /// Maximum rows to return.
     #[arg(long, default_value_t = 20)]
@@ -302,7 +306,7 @@ enum ClientCommand {
     Status,
     Rules(RulesCommand),
     Content(ContentCommand),
-    Dislikes(DislikesCommand),
+    Feedback(FeedbackCommand),
     Annotations(AnnotationsCommand),
 }
 
@@ -499,10 +503,10 @@ async fn run_content(client: &DaemonClient, command: ContentCommand) -> CliResul
     Ok(())
 }
 
-async fn run_dislikes(client: &DaemonClient, command: DislikesCommand) -> CliResult<()> {
+async fn run_feedback(client: &DaemonClient, command: FeedbackCommand) -> CliResult<()> {
     let args = match command.command {
-        Some(DislikesSubcommand::List(args)) => args,
-        None => DislikesListArgs {
+        Some(FeedbackSubcommand::List(args)) => args,
+        None => FeedbackListArgs {
             site: DEFAULT_SITE.into(),
             active: true,
             limit: 20,
@@ -512,7 +516,7 @@ async fn run_dislikes(client: &DaemonClient, command: DislikesCommand) -> CliRes
     };
     let value = client
         .get_json(
-            "/v1/dislikes",
+            "/v1/feedback",
             &[
                 ("site", args.site),
                 ("active", args.active.to_string()),
@@ -525,7 +529,7 @@ async fn run_dislikes(client: &DaemonClient, command: DislikesCommand) -> CliRes
     if args.json {
         print_json(&value)?;
     } else {
-        print_dislikes(&value);
+        print_feedback(&value);
     }
 
     Ok(())
@@ -673,8 +677,8 @@ fn print_content_stats(value: &Value) {
     );
 }
 
-fn print_dislikes(value: &Value) {
-    print_page_header("dislikes", value);
+fn print_feedback(value: &Value) {
+    print_page_header("feedback", value);
     println!(
         "{:<28} {:<18} {:<8}  REASON",
         "STORAGE KEY", "AUTHOR", "ACTIVE"

@@ -79,7 +79,7 @@ cargo run -- rules list --site x.com
 cargo run -- content list --site x.com --limit 20
 cargo run -- content search --site x.com codex
 cargo run -- content stats --site x.com
-cargo run -- dislikes list --site x.com
+cargo run -- feedback list --site x.com
 cargo run -- annotations list --site x.com --storage-key x:id:123
 cargo run -- annotations put \
   --site x.com \
@@ -121,7 +121,7 @@ RUST_LOG=debug
 - `GET /v1/content/annotations?site=x.com&storageKey=x:id:123`
 - `POST /v1/content/annotations?site=x.com`
 - `GET /v1/content/stats?site=x.com`
-- `GET /v1/dislikes?site=x.com`
+- `GET /v1/feedback?site=x.com`
 - `GET /v1/rules?site=x.com`
 
 `/v1/events` is the primary extension path. The extension opens a WebSocket,
@@ -135,9 +135,10 @@ region. Site-scoped inspection endpoints keep the path generic and take the
 site scope through the `site` query parameter. `/v1/content` lists recent stored
 content or searches it with SQLite FTS5 when `q` is provided. `/v1/content/stats`
 returns unique stored content rows and total captured encounters for the
-selected site. `/v1/content/annotations` lets agents attach tags, notes, topics,
-or other JSON metadata to stored content without changing the original captured
-content.
+selected site. `/v1/feedback` lists stored user feedback signals, such as active
+thumbs-down feedback for X posts. `/v1/content/annotations` lets agents attach
+tags, notes, topics, or other JSON metadata to stored content without changing
+the original captured content.
 
 Annotation request shape:
 
