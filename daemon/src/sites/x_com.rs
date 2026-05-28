@@ -291,10 +291,7 @@ fn extract_item(
         .as_deref()
         .and_then(x_status_id)
         .map(ToOwned::to_owned);
-
-    if post_id.is_none() {
-        return None;
-    }
+    post_id.as_ref()?;
 
     let author = status_href.as_deref().and_then(author_handle);
     let item = ContentItem {

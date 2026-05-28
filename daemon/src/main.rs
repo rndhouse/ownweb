@@ -1,5 +1,6 @@
 mod ai;
 mod api;
+mod cli;
 mod core;
 mod sites;
 mod storage;
@@ -13,7 +14,24 @@ const DEFAULT_BIND_ADDR: &str = "127.0.0.1:17891";
 const BIND_ADDR_ENV: &str = "WEBLAYER_BIND_ADDR";
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() {
+    if let Err(error) = run().await {
+        eprintln!("{error}");
+        std::process::exit(1);
+    }
+}
+
+async fn run() -> Result<(), Box<dyn std::error::Error>> {
+    let cli = cli::Cli::from_args();
+    if !cli.runs_daemon()? {
+        cli::run_client(&cli).await?;
+        return Ok(());
+    }
+
+    run_daemon().await
+}
+
+async fn run_daemon() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt()
         .with_env_filter(
             EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("debug")),
