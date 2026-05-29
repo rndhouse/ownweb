@@ -13,15 +13,15 @@ WebLayer helps you take sovereignty over the web you consume. It sends page cont
 WebLayer builds as one `weblayer` binary. Start the local daemon with:
 
 ```sh
-cargo run --manifest-path daemon/Cargo.toml -- daemon
+cargo run --manifest-path weblayer/Cargo.toml -- daemon
 ```
 
 After the daemon is running, use the same binary as a CLI client:
 
 ```sh
-cargo run --manifest-path daemon/Cargo.toml -- status
-cargo run --manifest-path daemon/Cargo.toml -- rules list --site x.com
-cargo run --manifest-path daemon/Cargo.toml -- content stats --site x.com
+cargo run --manifest-path weblayer/Cargo.toml -- status
+cargo run --manifest-path weblayer/Cargo.toml -- rules list --site x.com
+cargo run --manifest-path weblayer/Cargo.toml -- content stats --site x.com
 ```
 
 ## Supported Sites
