@@ -81,6 +81,10 @@
   opacity: 0.6;
 }
 
+.weblayer-feedback-button[data-weblayer-feedback-state="contextPending"] {
+  opacity: 1;
+}
+
 .weblayer-feedback-icon {
   width: 18px;
   height: 18px;

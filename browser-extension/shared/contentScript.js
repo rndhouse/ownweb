@@ -89,6 +89,7 @@ function scanForRegions() {
     setSnapshotCaptureContextKey(snapshot, context.key);
     elementsByClientId.set(snapshot.clientId, element);
     snapshotsByClientId.set(snapshot.clientId, snapshot);
+    installOptimisticFeedbackControl(element, snapshot);
     queuedSnapshots.push(snapshot);
   }
 
@@ -894,17 +895,37 @@ function insertBadge(element, command) {
   element.prepend(badge);
 }
 
-function insertFeedbackControl(element, command) {
+function installOptimisticFeedbackControl(element, snapshot) {
+  insertFeedbackControl(
+    element,
+    {
+      target: { clientId: snapshot.clientId },
+      label: "Hide this post"
+    },
+    { allowPendingContext: true }
+  );
+}
+
+function insertFeedbackControl(element, command, options = {}) {
   const clientId = command.target && command.target.clientId
     ? command.target.clientId
     : getClientId(element);
   const isSubjectPost = isSubjectPostElement(element, clientId);
+  const label = command.label || "Hide this post";
+  const allowPendingContext = options.allowPendingContext === true;
   const existingButton = element.querySelector(
     `.weblayer-feedback-button[data-weblayer-client-id="${cssEscape(clientId)}"]`
   );
   if (existingButton) {
     existingButton.classList.toggle("weblayer-feedback-button--subject", isSubjectPost);
-    storeFeedbackContextId(existingButton, command.feedbackContextId);
+    if (command.feedbackContextId) {
+      storeFeedbackContextId(existingButton, command.feedbackContextId);
+      setFeedbackButtonReady(existingButton, label);
+    } else if (allowPendingContext && !existingButton.dataset.weblayerFeedbackContextId) {
+      setFeedbackButtonWaitingForContext(existingButton);
+    } else if (!allowPendingContext) {
+      storeFeedbackContextId(existingButton, command.feedbackContextId);
+    }
     if (!existingButton.hasAttribute("aria-pressed")) {
       existingButton.setAttribute("aria-pressed", "false");
     }
@@ -922,9 +943,10 @@ function insertFeedbackControl(element, command) {
   slot.append(
     createFeedbackButton(
       clientId,
-      command.label || "Hide this post",
+      label,
       isSubjectPost,
-      command.feedbackContextId
+      command.feedbackContextId,
+      { allowPendingContext }
     )
   );
 
@@ -950,7 +972,13 @@ function createFeedbackSlot(referenceSlot) {
   return slot;
 }
 
-function createFeedbackButton(clientId, label, isSubjectPost, feedbackContextId) {
+function createFeedbackButton(
+  clientId,
+  label,
+  isSubjectPost,
+  feedbackContextId,
+  options = {}
+) {
   const button = document.createElement("button");
   button.type = "button";
   button.className = "weblayer-feedback-button";
@@ -962,7 +990,14 @@ function createFeedbackButton(clientId, label, isSubjectPost, feedbackContextId)
   button.title = label;
   button.setAttribute("aria-label", label);
   button.setAttribute("aria-pressed", "false");
-  storeFeedbackContextId(button, feedbackContextId);
+  if (feedbackContextId) {
+    storeFeedbackContextId(button, feedbackContextId);
+    setFeedbackButtonReady(button, label);
+  } else if (options.allowPendingContext === true) {
+    setFeedbackButtonWaitingForContext(button);
+  } else {
+    storeFeedbackContextId(button, feedbackContextId);
+  }
   button.append(createThumbsDownIcon());
   return button;
 }
@@ -972,6 +1007,38 @@ function storeFeedbackContextId(button, feedbackContextId) {
     throw new Error("Feedback context ID is required.");
   }
   button.dataset.weblayerFeedbackContextId = feedbackContextId;
+}
+
+function setFeedbackButtonReady(button, label) {
+  if (button.dataset.weblayerFeedbackState === "pending") {
+    return;
+  }
+
+  button.disabled = false;
+  button.removeAttribute("aria-disabled");
+
+  if (button.classList.contains("weblayer-feedback-button--active")) {
+    setFeedbackButtonActive(button, true);
+    return;
+  }
+
+  button.dataset.weblayerFeedbackState = "idle";
+  button.title = label || "Hide this post";
+  button.setAttribute("aria-label", label || "Hide this post");
+  button.setAttribute("aria-pressed", "false");
+}
+
+function setFeedbackButtonWaitingForContext(button) {
+  if (button.dataset.weblayerFeedbackState === "pending") {
+    return;
+  }
+
+  button.disabled = true;
+  button.dataset.weblayerFeedbackState = "contextPending";
+  button.title = "Preparing WebLayer feedback";
+  button.setAttribute("aria-label", "Preparing WebLayer feedback");
+  button.setAttribute("aria-disabled", "true");
+  button.setAttribute("aria-pressed", "false");
 }
 
 function currentFeedbackContextId(element, clientId, button) {
@@ -1072,7 +1139,27 @@ function markBatchUnavailable(batch, error) {
     element.title = `WebLayer daemon unavailable: ${
       error instanceof Error ? error.message : String(error)
     }`;
+    markFeedbackControlUnavailable(element, snapshot.clientId, error);
   }
+}
+
+function markFeedbackControlUnavailable(element, clientId, error) {
+  const button = element.querySelector(
+    `.weblayer-feedback-button[data-weblayer-client-id="${cssEscape(clientId)}"]`
+  );
+  if (!button || button.classList.contains("weblayer-feedback-button--active")) {
+    return;
+  }
+
+  const message = `WebLayer daemon unavailable: ${
+    error instanceof Error ? error.message : String(error)
+  }`;
+  button.disabled = true;
+  button.dataset.weblayerFeedbackState = "unavailable";
+  button.title = message;
+  button.setAttribute("aria-label", message);
+  button.setAttribute("aria-disabled", "true");
+  button.setAttribute("aria-pressed", "false");
 }
 
 function cssPath(element) {
