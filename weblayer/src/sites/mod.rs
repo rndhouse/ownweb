@@ -1,7 +1,7 @@
 use crate::{
     ai::AiAnalyzer,
-    core::{DomAnalysisBatch, DomCommand, FeedbackContext, FeedbackKind},
-    storage::ContentStore,
+    core::{DomAnalysisBatch, DomCommand, FeedbackKind},
+    storage::{ContentStore, StorageError},
 };
 
 pub mod x_com;
@@ -39,14 +39,14 @@ pub fn apply_feedback(
     batch: &DomAnalysisBatch,
     feedback: FeedbackKind,
     reason: &str,
-    feedback_context: FeedbackContext,
+    feedback_context_id: &str,
     content_store: &ContentStore,
-) -> Vec<DomCommand> {
+) -> Result<Vec<DomCommand>, StorageError> {
     match page_host(&batch.page.url).as_deref() {
         Some("x.com") | Some("twitter.com") => {
-            x_com::apply_feedback(batch, feedback, reason, feedback_context, content_store)
+            x_com::apply_feedback(batch, feedback, reason, feedback_context_id, content_store)
         }
-        _ => Vec::new(),
+        _ => Ok(Vec::new()),
     }
 }
 

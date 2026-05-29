@@ -311,9 +311,9 @@ pub struct DomCommand {
     pub reason: Option<String>,
     /// Classifier confidence on a `0.0..=1.0` scale when known.
     pub confidence: Option<f32>,
-    /// Rule and decision context to echo when the user provides feedback.
+    /// Opaque daemon-side feedback context ID to echo when the user provides feedback.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub feedback_context: Option<FeedbackContext>,
+    pub feedback_context_id: Option<String>,
     /// Active rule IDs that contributed to this command.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub matched_rule_ids: Vec<String>,
@@ -337,7 +337,7 @@ impl DomCommand {
             text: decision.replacement_text,
             reason: decision.reason,
             confidence: decision.confidence,
-            feedback_context: None,
+            feedback_context_id: None,
             matched_rule_ids: decision.matched_rule_ids,
         }
     }
@@ -351,18 +351,15 @@ impl DomCommand {
             text: None,
             reason: Some("User feedback control".into()),
             confidence: None,
-            feedback_context: None,
+            feedback_context_id: None,
             matched_rule_ids: Vec::new(),
         }
     }
 
-    /// Builds a feedback control that carries rule context for future feedback.
-    pub fn feedback_control_with_context(
-        target: DomCommandTarget,
-        feedback_context: FeedbackContext,
-    ) -> Self {
+    /// Builds a feedback control that carries an opaque daemon context ID.
+    pub fn feedback_control_with_context_id(target: DomCommandTarget, context_id: String) -> Self {
         let mut command = Self::feedback_control(target);
-        command.feedback_context = Some(feedback_context);
+        command.feedback_context_id = Some(context_id);
         command
     }
 }

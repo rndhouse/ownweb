@@ -71,6 +71,16 @@ pub(super) fn initialize(connection: &Connection) -> Result<()> {
     CREATE INDEX IF NOT EXISTS tweet_feedback_state_post_id_idx
         ON tweet_feedback_state(post_id);
 
+    CREATE TABLE IF NOT EXISTS feedback_contexts (
+        id TEXT PRIMARY KEY,
+        site TEXT NOT NULL,
+        created_at_unix_ms INTEGER NOT NULL,
+        context_json TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS feedback_contexts_created_at_idx
+        ON feedback_contexts(created_at_unix_ms);
+
     CREATE TABLE IF NOT EXISTS content_rules (
         id TEXT PRIMARY KEY,
         site TEXT NOT NULL,

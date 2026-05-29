@@ -436,14 +436,14 @@ async function sendFeedbackEvent(element, feedback, reason, button) {
   if (!snapshot) {
     return null;
   }
-  const feedbackContext = currentFeedbackContext(element, snapshot.clientId, button);
+  const feedbackContextId = currentFeedbackContextId(element, snapshot.clientId, button);
   const message = {
     type: "weblayer:feedback",
     feedback,
     reason,
     page: pageSnapshot(),
     element: snapshot,
-    feedbackContext
+    feedbackContextId
   };
 
   return sendMessage(message);
@@ -854,7 +854,7 @@ function insertFeedbackControl(element, command) {
   );
   if (existingButton) {
     existingButton.classList.toggle("weblayer-feedback-button--subject", isSubjectPost);
-    storeFeedbackContext(existingButton, command.feedbackContext);
+    storeFeedbackContextId(existingButton, command.feedbackContextId);
     if (!existingButton.hasAttribute("aria-pressed")) {
       existingButton.setAttribute("aria-pressed", "false");
     }
@@ -874,7 +874,7 @@ function insertFeedbackControl(element, command) {
       clientId,
       command.label || "Hide this post",
       isSubjectPost,
-      command.feedbackContext
+      command.feedbackContextId
     )
   );
 
@@ -900,7 +900,7 @@ function createFeedbackSlot(referenceSlot) {
   return slot;
 }
 
-function createFeedbackButton(clientId, label, isSubjectPost, feedbackContext) {
+function createFeedbackButton(clientId, label, isSubjectPost, feedbackContextId) {
   const button = document.createElement("button");
   button.type = "button";
   button.className = "weblayer-feedback-button";
@@ -912,40 +912,29 @@ function createFeedbackButton(clientId, label, isSubjectPost, feedbackContext) {
   button.title = label;
   button.setAttribute("aria-label", label);
   button.setAttribute("aria-pressed", "false");
-  storeFeedbackContext(button, feedbackContext);
+  storeFeedbackContextId(button, feedbackContextId);
   button.append(createThumbsDownIcon());
   return button;
 }
 
-function storeFeedbackContext(button, feedbackContext) {
-  if (!feedbackContext || typeof feedbackContext !== "object" || Array.isArray(feedbackContext)) {
-    throw new Error("Feedback context is required.");
+function storeFeedbackContextId(button, feedbackContextId) {
+  if (!feedbackContextId) {
+    throw new Error("Feedback context ID is required.");
   }
-  button.dataset.weblayerFeedbackContext = JSON.stringify(feedbackContext);
+  button.dataset.weblayerFeedbackContextId = feedbackContextId;
 }
 
-function currentFeedbackContext(element, clientId, button) {
+function currentFeedbackContextId(element, clientId, button) {
   const source = button || element.querySelector(
     `.weblayer-feedback-button[data-weblayer-client-id="${cssEscape(clientId)}"]`
   );
-  if (!source || !source.dataset.weblayerFeedbackContext) {
-    throw new Error("Feedback context is missing.");
+  const feedbackContextId = source && source.dataset.weblayerFeedbackContextId
+    ? source.dataset.weblayerFeedbackContextId
+    : "";
+  if (!feedbackContextId) {
+    throw new Error("Feedback context ID is missing.");
   }
-
-  try {
-    const feedbackContext = JSON.parse(source.dataset.weblayerFeedbackContext);
-    if (
-      !feedbackContext ||
-      typeof feedbackContext !== "object" ||
-      Array.isArray(feedbackContext)
-    ) {
-      throw new Error("Feedback context is invalid.");
-    }
-    return feedbackContext;
-  } catch (_error) {
-    delete source.dataset.weblayerFeedbackContext;
-    throw new Error("Feedback context is invalid.");
-  }
+  return feedbackContextId;
 }
 
 function isSubjectPostElement(element, clientId) {

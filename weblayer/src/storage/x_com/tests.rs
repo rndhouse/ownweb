@@ -253,6 +253,13 @@ fn records_feedback_rule_context_for_x_post() {
         }],
         decision: None,
     };
+    let context_id = store
+        .store_feedback_context(&feedback_context)
+        .expect("feedback context should store");
+    let loaded_context = store
+        .feedback_context(&context_id)
+        .expect("feedback context should load")
+        .expect("feedback context should exist");
 
     store
         .record_feedback_with_context(
@@ -287,6 +294,7 @@ fn records_feedback_rule_context_for_x_post() {
         serde_json::from_str::<FeedbackContext>(&stored_context).expect("context should parse"),
         feedback_context
     );
+    assert_eq!(loaded_context, feedback_context);
     assert_eq!(page.items[0].rule_context, feedback_context);
 
     let _ = std::fs::remove_dir_all(db_path.parent().unwrap().parent().unwrap());

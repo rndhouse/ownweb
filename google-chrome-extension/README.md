@@ -31,7 +31,8 @@ Content-Type: application/json
 ```
 
 The extension also sends user feedback to the daemon. A thumbs-down click posts
-the current region snapshot to:
+the current region snapshot and the opaque `feedbackContextId` from the
+feedback control to:
 
 ```http
 POST http://127.0.0.1:17891/v1/dom/feedback
@@ -95,19 +96,7 @@ WebSocket command event shape:
       "text": null,
       "reason": "User feedback control",
       "confidence": null,
-      "feedbackContext": {
-        "activeRules": [
-          {
-            "id": "x-engagement-bait-reaction",
-            "priority": 50,
-            "title": "Engagement bait reaction posts",
-            "instruction": "Downrank engagement bait reaction posts.",
-            "updatedAtUnixMs": 1760000000000,
-            "positiveExamples": [],
-            "negativeExamples": []
-          }
-        ]
-      }
+      "feedbackContextId": "xfctx-0123456789abcdef"
     }
   ]
 }
@@ -147,19 +136,7 @@ Feedback request shape:
     "snapshotHash": "abc123",
     "capturedAt": "2026-05-21T10:00:00.000Z"
   },
-  "feedbackContext": {
-    "activeRules": [
-      {
-        "id": "x-engagement-bait-reaction",
-        "priority": 50,
-        "title": "Engagement bait reaction posts",
-        "instruction": "Downrank engagement bait reaction posts.",
-        "updatedAtUnixMs": 1760000000000,
-        "positiveExamples": [],
-        "negativeExamples": []
-      }
-    ]
-  }
+  "feedbackContextId": "xfctx-0123456789abcdef"
 }
 ```
 

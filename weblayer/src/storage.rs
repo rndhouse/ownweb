@@ -546,6 +546,24 @@ impl ContentStore {
         db.record_feedback_with_context(item, feedback, reason, feedback_context)
     }
 
+    /// Stores a daemon-side X/Twitter feedback context and returns its opaque ID.
+    pub fn store_x_feedback_context(&self, feedback_context: &FeedbackContext) -> Result<String> {
+        let mut db = self
+            .x_com
+            .lock()
+            .expect("X storage mutex should not be poisoned");
+        db.store_feedback_context(feedback_context)
+    }
+
+    /// Loads a daemon-side X/Twitter feedback context by opaque ID.
+    pub fn x_feedback_context(&self, id: &str) -> Result<Option<FeedbackContext>> {
+        let db = self
+            .x_com
+            .lock()
+            .expect("X storage mutex should not be poisoned");
+        db.feedback_context(id)
+    }
+
     /// Returns the current feedback state for one X/Twitter content item.
     pub fn x_feedback_state(&self, item: &ContentItem) -> Result<Option<XFeedbackState>> {
         let db = self

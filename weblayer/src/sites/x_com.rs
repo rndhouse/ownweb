@@ -10,7 +10,7 @@ use crate::{
         AnalysisBatch, DomAnalysisBatch, DomCommand, FeedbackContext, FeedbackKind,
         FeedbackRuleContext,
     },
-    storage::ContentStore,
+    storage::{ContentStore, StorageError},
 };
 use tracing::warn;
 
@@ -32,7 +32,7 @@ pub async fn analyze_dom(
     let feedback_context = feedback_context_from_active_rules(&active_rules);
     let decisions = decide::decide_items(&content_batch.items, ai_analyzer, &active_rules).await;
     let decisions = decide::apply_stored_feedback(content_store, &content_batch.items, decisions);
-    commands::commands_from_decisions(extracted_items, decisions, &feedback_context)
+    commands::commands_from_decisions(extracted_items, decisions, &feedback_context, content_store)
 }
 
 /// Returns final commands when every required X summary is already cached.
@@ -57,6 +57,7 @@ pub fn cached_dom_commands(
         extracted_items,
         decisions,
         &feedback_context,
+        content_store,
     ))
 }
 
@@ -71,15 +72,20 @@ pub fn pending_dom_commands(
 
     extract::extract_items(batch)
         .into_iter()
-        .map(|extracted| {
-            decide::stored_dislike_decision(content_store, &extracted.item)
-                .map(|decision| DomCommand::from_decision(decision, extracted.target.clone()))
-                .unwrap_or_else(|| {
-                    DomCommand::feedback_control_with_context(
-                        extracted.target,
-                        feedback_context.clone(),
-                    )
-                })
+        .filter_map(|extracted| {
+            if let Some(decision) = decide::stored_dislike_decision(content_store, &extracted.item)
+            {
+                Some(DomCommand::from_decision(
+                    decision,
+                    extracted.target.clone(),
+                ))
+            } else {
+                feedback_control_with_stored_context(
+                    content_store,
+                    extracted.target,
+                    &feedback_context,
+                )
+            }
         })
         .collect()
 }
@@ -89,25 +95,46 @@ pub fn apply_feedback(
     batch: &DomAnalysisBatch,
     feedback: FeedbackKind,
     reason: &str,
-    feedback_context: FeedbackContext,
+    feedback_context_id: &str,
     content_store: &ContentStore,
-) -> Vec<DomCommand> {
+) -> Result<Vec<DomCommand>, StorageError> {
     let extracted_items = extract::extract_items(batch);
     if extracted_items.is_empty() {
-        return Vec::new();
+        return Ok(Vec::new());
     }
 
     let content_batch = content_batch_from_extracted(&extracted_items);
     record_content_batch(content_store, &content_batch);
+    let feedback_context = content_store
+        .x_feedback_context(feedback_context_id)?
+        .ok_or_else(|| {
+            StorageError::InvalidInput(format!("feedback context not found: {feedback_context_id}"))
+        })?;
     decide::record_feedback(
         content_store,
         &content_batch.items,
         feedback,
         reason,
         &feedback_context,
-    );
+    )?;
 
-    Vec::new()
+    Ok(Vec::new())
+}
+
+fn feedback_control_with_stored_context(
+    content_store: &ContentStore,
+    target: crate::core::DomCommandTarget,
+    feedback_context: &FeedbackContext,
+) -> Option<DomCommand> {
+    match content_store.store_x_feedback_context(feedback_context) {
+        Ok(context_id) => Some(DomCommand::feedback_control_with_context_id(
+            target, context_id,
+        )),
+        Err(error) => {
+            warn!(%error, "failed to store feedback context for X pending command");
+            None
+        }
+    }
 }
 
 fn feedback_context_from_active_rules(active_rules: &[AiContentRule]) -> FeedbackContext {

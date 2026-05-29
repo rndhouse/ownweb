@@ -127,7 +127,7 @@ async function sendFeedback(message) {
     reason,
     page,
     element,
-    feedbackContext: normalizeFeedbackContext(message.feedbackContext)
+    feedbackContextId: normalizeFeedbackContextId(message.feedbackContextId)
   };
 
   const response = await postJson(settings.daemonOrigin, FEEDBACK_PATH, body);
@@ -340,25 +340,21 @@ function normalizeCommand(command) {
     text: stringOrNull(command.text),
     reason: stringOrNull(command.reason),
     confidence: Number.isFinite(command.confidence) ? command.confidence : null,
-    feedbackContext: normalizedAction === "insertFeedbackControl"
-      ? normalizeFeedbackContext(command.feedbackContext)
-      : objectOrNull(command.feedbackContext),
+    feedbackContextId: normalizedAction === "insertFeedbackControl"
+      ? normalizeFeedbackContextId(command.feedbackContextId)
+      : stringOrNull(command.feedbackContextId),
     matchedRuleIds: Array.isArray(command.matchedRuleIds)
       ? command.matchedRuleIds.map(stringOrEmpty).filter(Boolean)
       : []
   };
 }
 
-function objectOrNull(value) {
-  return value && typeof value === "object" && !Array.isArray(value) ? value : null;
-}
-
-function normalizeFeedbackContext(value) {
-  const context = objectOrNull(value);
-  if (!context) {
-    throw new Error("Feedback context is required.");
+function normalizeFeedbackContextId(value) {
+  const id = stringOrEmpty(value);
+  if (!id) {
+    throw new Error("Feedback context ID is required.");
   }
-  return context;
+  return id;
 }
 
 function normalizeFeedback(value) {

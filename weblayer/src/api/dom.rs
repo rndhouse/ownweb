@@ -1,9 +1,6 @@
 use super::AppState;
 use crate::{
-    core::{
-        DomAnalysisBatch, DomCommand, DomElementSnapshot, FeedbackContext, FeedbackKind,
-        PageSnapshot,
-    },
+    core::{DomAnalysisBatch, DomCommand, DomElementSnapshot, FeedbackKind, PageSnapshot},
     sites,
 };
 use axum::{extract::State, Json};
@@ -27,13 +24,13 @@ pub(super) async fn analyze_dom(
 pub(super) async fn dom_feedback(
     State(state): State<AppState>,
     Json(request): Json<DomFeedbackRequest>,
-) -> Json<DomFeedbackResponse> {
+) -> Result<Json<DomFeedbackResponse>, super::error::ApiError> {
     let DomFeedbackRequest {
         feedback,
         page,
         element,
         reason,
-        feedback_context,
+        feedback_context_id,
     } = request;
     let batch = DomAnalysisBatch {
         page,
@@ -43,15 +40,15 @@ pub(super) async fn dom_feedback(
         log_dom_batch(&batch);
     }
 
-    Json(DomFeedbackResponse {
+    Ok(Json(DomFeedbackResponse {
         commands: sites::apply_feedback(
             &batch,
             feedback,
             reason.as_str(),
-            feedback_context,
+            feedback_context_id.as_str(),
             &state.content_store,
-        ),
-    })
+        )?,
+    }))
 }
 
 pub(super) fn log_dom_batch(batch: &DomAnalysisBatch) {
@@ -106,8 +103,8 @@ pub struct DomFeedbackRequest {
     pub page: PageSnapshot,
     /// DOM region that received feedback.
     pub element: DomElementSnapshot,
-    /// Rule context emitted by the daemon when the feedback control was rendered.
-    pub feedback_context: FeedbackContext,
+    /// Opaque daemon-side rule context ID emitted with the feedback control.
+    pub feedback_context_id: String,
 }
 
 /// Response for a DOM feedback request.

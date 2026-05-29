@@ -161,11 +161,11 @@ identified posts, then receives `final` commands after local analysis finishes.
 `/v1/dom/analyze` is the REST smoke-test path. It accepts the same DOM snapshot
 shape and returns final DOM commands in one response. `/v1/dom/feedback`
 records `thumbsDown`, `undoThumbsDown`, and `updateReason` signals for one DOM
-region. Feedback controls include a `feedbackContext` snapshot of the active
-rule set; the extension echoes it back so feedback can be tied to the rules
-that were in play. Site-scoped inspection endpoints keep the path generic and
-take the site scope through the `site` query parameter. `/v1/content` lists
-recent stored content or searches it with SQLite FTS5 when `q` is provided.
+region. Feedback controls include an opaque `feedbackContextId`; the extension
+echoes that ID back, and the daemon resolves it to the stored rule context that
+was in play. Site-scoped inspection endpoints keep the path generic and take
+the site scope through the `site` query parameter. `/v1/content` lists recent
+stored content or searches it with SQLite FTS5 when `q` is provided.
 `/v1/content/stats` returns unique stored content rows and total captured
 encounters for the selected site. `/v1/feedback` lists stored user feedback
 signals, such as active thumbs-down feedback for X posts.
@@ -281,8 +281,9 @@ DOM analysis response shape:
 }
 ```
 
-`insertFeedbackControl` commands include `feedbackContext`, with active rule
-snapshots and item-specific decision metadata for later feedback.
+`insertFeedbackControl` commands include `feedbackContextId`, an opaque
+daemon-side lookup key for active rule snapshots and item-specific decision
+metadata.
 
 WebSocket request shape:
 

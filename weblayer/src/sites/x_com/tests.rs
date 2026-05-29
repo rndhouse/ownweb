@@ -310,6 +310,14 @@ fn pending_commands_install_feedback_controls_for_all_posts() {
     )));
     assert_eq!(commands[0].target.client_id, "client-1");
     assert_eq!(commands[1].target.client_id, "client-2");
+    assert!(commands[0]
+        .feedback_context_id
+        .as_deref()
+        .is_some_and(|id| !id.is_empty()));
+    assert!(commands[1]
+        .feedback_context_id
+        .as_deref()
+        .is_some_and(|id| !id.is_empty()));
 
     let _ = std::fs::remove_dir_all(data_dir);
 }
@@ -323,14 +331,18 @@ fn thumbs_down_feedback_records_state_without_hiding_immediately() {
         Some("https://x.com/user/status/12345"),
     )]);
     let ai_analyzer = AiAnalyzer::for_tests_with_x_summaries(&[]);
+    let feedback_context_id = content_store
+        .store_x_feedback_context(&FeedbackContext::default())
+        .expect("feedback context should store");
 
     let commands = apply_feedback(
         &batch,
         FeedbackKind::ThumbsDown,
         "low quality",
-        FeedbackContext::default(),
+        feedback_context_id.as_str(),
         &content_store,
-    );
+    )
+    .expect("feedback should apply");
     let pending_commands = pending_dom_commands(&batch, &ai_analyzer, &content_store);
 
     assert!(commands.is_empty());

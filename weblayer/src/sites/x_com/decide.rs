@@ -1,7 +1,7 @@
 use crate::{
     ai::{AiAction, AiAnalyzer, AiContentRule, AiOpinion},
     core::{ContentDecision, ContentItem, FeedbackContext, FeedbackKind},
-    storage::{ContentStore, RuleQuery},
+    storage::{ContentStore, RuleQuery, StorageError},
 };
 use std::collections::HashMap;
 use tracing::warn;
@@ -12,19 +12,12 @@ pub(super) fn record_feedback(
     feedback: FeedbackKind,
     reason: &str,
     feedback_context: &FeedbackContext,
-) {
+) -> Result<(), StorageError> {
     for item in items {
-        if let Err(error) =
-            content_store.record_x_feedback_with_context(item, feedback, reason, feedback_context)
-        {
-            warn!(
-                %error,
-                client_id = item.client_id.as_str(),
-                content_id = item.content_id.as_deref(),
-                "failed to store X feedback"
-            );
-        }
+        content_store.record_x_feedback_with_context(item, feedback, reason, feedback_context)?;
     }
+
+    Ok(())
 }
 
 pub(super) async fn decide_items(

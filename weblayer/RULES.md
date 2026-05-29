@@ -4,11 +4,12 @@ Content rules are stored as site-scoped policy records in the site database.
 For X, rules live in `~/.local/share/weblayer/x.com/db.sqlite` in the
 `content_rules` table.
 
-Feedback events also store a feedback-time rule context snapshot when one is
-available. That context records the active rules and any item decision metadata
-the daemon emitted with the feedback control, so later rule-curation work can
-distinguish uncovered feedback from feedback on content already governed by an
-existing rule.
+Feedback events also store a feedback-time rule context snapshot. The daemon
+keeps that snapshot in SQLite and sends the extension only an opaque
+`feedbackContextId`. That context records the active rules and any item decision
+metadata the daemon emitted with the feedback control, so later rule-curation
+work can distinguish uncovered feedback from feedback on content already
+governed by an existing rule.
 
 The daemon currently seeds one active X rule:
 

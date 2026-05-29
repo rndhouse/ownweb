@@ -1,6 +1,7 @@
 use super::super::{Result, XFeedbackState};
 use super::{
-    clean_optional, normalize_text, now_unix_ms, sqlite_limit, stable_post_id, storage_key, Store,
+    clean_optional, normalize_text, now_unix_ms, sqlite_limit, stable_hash, stable_post_id,
+    storage_key, Store, SITE_DIR,
 };
 use crate::{
     core::{ContentItem, FeedbackContext, FeedbackKind},
@@ -11,6 +12,52 @@ use serde::Serialize;
 use tracing::debug;
 
 impl Store {
+    pub(in crate::storage) fn store_feedback_context(
+        &mut self,
+        feedback_context: &FeedbackContext,
+    ) -> Result<String> {
+        let context_json = serde_json::to_string(feedback_context)?;
+        let id = feedback_context_id(&context_json);
+        let created_at_unix_ms = now_unix_ms();
+
+        self.connection.execute(
+            "
+            INSERT OR IGNORE INTO feedback_contexts (
+                id,
+                site,
+                created_at_unix_ms,
+                context_json
+            ) VALUES (?1, ?2, ?3, ?4)
+            ",
+            params![id, SITE_DIR, created_at_unix_ms, context_json],
+        )?;
+
+        Ok(id)
+    }
+
+    pub(in crate::storage) fn feedback_context(&self, id: &str) -> Result<Option<FeedbackContext>> {
+        let Some(id) = clean_optional(Some(id)) else {
+            return Ok(None);
+        };
+
+        let context_json = self
+            .connection
+            .query_row(
+                "
+                SELECT context_json
+                FROM feedback_contexts
+                WHERE id = ?1
+                ",
+                [id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?;
+
+        context_json
+            .map(|context_json| Ok(serde_json::from_str(&context_json)?))
+            .transpose()
+    }
+
     pub(in crate::storage) fn record_feedback_with_context(
         &mut self,
         item: &ContentItem,
@@ -227,6 +274,10 @@ impl Store {
             items,
         })
     }
+}
+
+fn feedback_context_id(context_json: &str) -> String {
+    format!("xfctx-{:016x}", stable_hash(context_json))
 }
 
 struct StoredTweetFeedback {
