@@ -9,7 +9,7 @@ relevant browsing data under your control.
 
 ## What It Includes
 
-- A Chrome extension that captures bounded DOM region snapshots from supported
+- A browser extension that captures bounded DOM region snapshots from supported
   sites.
 - A local `weblayer` binary that can run as the daemon or as a CLI client.
 - Site-scoped local storage for captured content, feedback, annotations, and
@@ -28,5 +28,5 @@ can hide posts and teach the daemon what you do not want to see.
 - [Install WebLayer](installation.md)
 - [Run the local daemon](local-daemon.md)
 - [Use the CLI](cli.md)
-- [Load the Chrome extension](chrome-extension.md)
+- [Load the browser extension](browser-extension.md)
 - [Manage rules](rules.md)

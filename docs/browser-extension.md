@@ -1,14 +1,31 @@
-# Chrome Extension
+# Browser Extension
 
-The Chrome extension sends allowlisted site content snapshots to the local
-WebLayer daemon and applies the daemon's returned DOM commands.
+The browser extension sends allowlisted site content snapshots to the local
+WebLayer daemon and applies the daemon's returned DOM commands. Chrome and
+Firefox use the same shared source with browser-specific manifests.
+
+## Build Development Extensions
+
+```sh
+make -C browser-extension
+```
+
+This creates `browser-extension/dist/chrome` and
+`browser-extension/dist/firefox`.
 
 ## Load in Chrome
 
 1. Open `chrome://extensions`.
 2. Enable Developer mode.
 3. Choose **Load unpacked**.
-4. Select the `google-chrome-extension` directory from the repository checkout.
+4. Select `browser-extension/dist/chrome`.
+
+## Load in Firefox
+
+1. Open `about:debugging`.
+2. Choose **This Firefox**.
+3. Choose **Load Temporary Add-on**.
+4. Select `browser-extension/dist/firefox/manifest.json`.
 
 ## Daemon Contract
 

@@ -32,7 +32,7 @@ nav:
   - Installation: installation.md
   - Local Daemon: local-daemon.md
   - CLI: cli.md
-  - Chrome Extension: chrome-extension.md
+  - Browser Extension: browser-extension.md
   - Rules: rules.md
 
 markdown_extensions:

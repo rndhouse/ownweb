@@ -1,7 +1,7 @@
 # Local Daemon
 
 The `weblayer` binary can run the local REST and WebSocket daemon used by the
-Chrome extension.
+browser extension.
 
 ```sh
 weblayer daemon

@@ -2,3 +2,4 @@ target/
 captured-posts.jsonl
 AGENTS.md
 site/
+browser-extension/dist/

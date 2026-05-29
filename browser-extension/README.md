@@ -1,16 +1,39 @@
 # WebLayer
 
-Chrome Manifest V3 extension that sends allowlisted site content snapshots to a
+Browser extension that sends allowlisted site content snapshots to a
 local WebLayer daemon and applies the daemon's returned DOM commands.
+
+## Build Development Extensions
+
+```sh
+make
+```
+
+This creates `dist/chrome` and `dist/firefox` from the shared extension source
+and the browser-specific manifests.
 
 ## Load in Chrome
 
 1. Open `chrome://extensions`.
 2. Enable Developer mode.
 3. Choose Load unpacked.
-4. Select this `google-chrome-extension` directory.
+4. Select `dist/chrome` from this directory.
 
-## Daemon contract
+## Load in Firefox
+
+1. Open `about:debugging`.
+2. Choose This Firefox.
+3. Choose Load Temporary Add-on.
+4. Select `dist/firefox/manifest.json` from this directory.
+
+## Source Layout
+
+- `shared/`: source files used by Chrome and Firefox.
+- `chrome/`: Chrome-specific manifest.
+- `firefox/`: Firefox-specific manifest.
+- `dist/`: generated output; do not edit by hand.
+
+## Daemon Contract
 
 The extension captures content only through explicit site adapters. Unknown
 hosts, unknown page surfaces, and unknown DOM structures send nothing. The
