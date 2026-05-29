@@ -1,14 +1,15 @@
+mod commands;
+mod decide;
+mod extract;
+#[cfg(test)]
+mod tests;
+
 use crate::{
-    ai::{AiAction, AiAnalyzer, AiContentRule, AiOpinion},
-    core::{
-        AnalysisBatch, ContentDecision, ContentItem, DomAnalysisBatch, DomCommand,
-        DomCommandTarget, DomElementSnapshot, FeedbackKind,
-    },
-    storage::{ContentStore, RuleQuery},
+    ai::AiAnalyzer,
+    core::{AnalysisBatch, DomAnalysisBatch, DomCommand, FeedbackKind},
+    storage::ContentStore,
 };
-use serde_json::json;
-use std::collections::HashMap;
-use tracing::{trace, warn, Level};
+use tracing::warn;
 
 /// Interprets X/Twitter DOM snapshots and returns browser DOM commands.
 pub async fn analyze_dom(
@@ -16,7 +17,7 @@ pub async fn analyze_dom(
     ai_analyzer: &AiAnalyzer,
     content_store: &ContentStore,
 ) -> Vec<DomCommand> {
-    let extracted_items = extract_items(batch);
+    let extracted_items = extract::extract_items(batch);
     if extracted_items.is_empty() {
         return Vec::new();
     }
@@ -24,10 +25,10 @@ pub async fn analyze_dom(
     let content_batch = content_batch_from_extracted(&extracted_items);
     record_content_batch(content_store, &content_batch);
 
-    let active_rules = active_x_rules(content_store);
-    let decisions = decide_items(&content_batch.items, ai_analyzer, &active_rules).await;
-    let decisions = apply_stored_feedback(content_store, &content_batch.items, decisions);
-    commands_from_decisions(extracted_items, decisions)
+    let active_rules = decide::active_x_rules(content_store);
+    let decisions = decide::decide_items(&content_batch.items, ai_analyzer, &active_rules).await;
+    let decisions = decide::apply_stored_feedback(content_store, &content_batch.items, decisions);
+    commands::commands_from_decisions(extracted_items, decisions)
 }
 
 /// Returns final commands when every required X summary is already cached.
@@ -36,18 +37,21 @@ pub fn cached_dom_commands(
     ai_analyzer: &AiAnalyzer,
     content_store: &ContentStore,
 ) -> Option<Vec<DomCommand>> {
-    let extracted_items = extract_items(batch);
+    let extracted_items = extract::extract_items(batch);
     if extracted_items.is_empty() {
         return Some(Vec::new());
     }
 
     let content_batch = content_batch_from_extracted(&extracted_items);
-    let active_rules = active_x_rules(content_store);
-    let decisions = cached_decide_items(&content_batch.items, ai_analyzer, &active_rules)?;
-    let decisions = apply_stored_feedback(content_store, &content_batch.items, decisions);
+    let active_rules = decide::active_x_rules(content_store);
+    let decisions = decide::cached_decide_items(&content_batch.items, ai_analyzer, &active_rules)?;
+    let decisions = decide::apply_stored_feedback(content_store, &content_batch.items, decisions);
     record_content_batch(content_store, &content_batch);
 
-    Some(commands_from_decisions(extracted_items, decisions))
+    Some(commands::commands_from_decisions(
+        extracted_items,
+        decisions,
+    ))
 }
 
 /// Returns immediate commands that install controls for identified X posts.
@@ -56,10 +60,10 @@ pub fn pending_dom_commands(
     _ai_analyzer: &AiAnalyzer,
     content_store: &ContentStore,
 ) -> Vec<DomCommand> {
-    extract_items(batch)
+    extract::extract_items(batch)
         .into_iter()
         .map(|extracted| {
-            stored_dislike_decision(content_store, &extracted.item)
+            decide::stored_dislike_decision(content_store, &extracted.item)
                 .map(|decision| DomCommand::from_decision(decision, extracted.target.clone()))
                 .unwrap_or_else(|| DomCommand::feedback_control(extracted.target))
         })
@@ -73,154 +77,19 @@ pub fn apply_feedback(
     reason: &str,
     content_store: &ContentStore,
 ) -> Vec<DomCommand> {
-    let extracted_items = extract_items(batch);
+    let extracted_items = extract::extract_items(batch);
     if extracted_items.is_empty() {
         return Vec::new();
     }
 
     let content_batch = content_batch_from_extracted(&extracted_items);
     record_content_batch(content_store, &content_batch);
-    record_feedback(content_store, &content_batch.items, feedback, reason);
+    decide::record_feedback(content_store, &content_batch.items, feedback, reason);
 
     Vec::new()
 }
 
-fn record_feedback(
-    content_store: &ContentStore,
-    items: &[ContentItem],
-    feedback: FeedbackKind,
-    reason: &str,
-) {
-    for item in items {
-        if let Err(error) = content_store.record_x_feedback(item, feedback, reason) {
-            warn!(
-                %error,
-                client_id = item.client_id.as_str(),
-                content_id = item.content_id.as_deref(),
-                "failed to store X feedback"
-            );
-        }
-    }
-}
-
-async fn decide_items(
-    items: &[ContentItem],
-    ai_analyzer: &AiAnalyzer,
-    active_rules: &[AiContentRule],
-) -> Vec<ContentDecision> {
-    let ai_items: Vec<_> = items
-        .iter()
-        .filter(|item| should_ask_codex(item))
-        .cloned()
-        .collect();
-
-    if !ai_items.is_empty() {
-        if let Some(opinions) = ai_analyzer.x_opinions(&ai_items, active_rules).await {
-            let mut opinions_by_id: HashMap<_, _> = opinions
-                .into_iter()
-                .map(|opinion| (opinion.client_id.clone(), opinion))
-                .collect();
-
-            return items
-                .iter()
-                .map(|item| {
-                    if let Some(opinion) = opinions_by_id.remove(&item.client_id) {
-                        reviewed_item_decision(opinion)
-                    } else {
-                        ContentDecision::keep(item.client_id.clone())
-                    }
-                })
-                .collect();
-        }
-    }
-
-    items
-        .iter()
-        .map(|item| ContentDecision::keep(item.client_id.clone()))
-        .collect()
-}
-
-fn apply_stored_feedback(
-    content_store: &ContentStore,
-    items: &[ContentItem],
-    decisions: Vec<ContentDecision>,
-) -> Vec<ContentDecision> {
-    let items_by_client_id: HashMap<&str, &ContentItem> = items
-        .iter()
-        .map(|item| (item.client_id.as_str(), item))
-        .collect();
-
-    decisions
-        .into_iter()
-        .map(|decision| {
-            let Some(item) = items_by_client_id.get(decision.client_id.as_str()) else {
-                return decision;
-            };
-
-            stored_dislike_decision(content_store, item).unwrap_or(decision)
-        })
-        .collect()
-}
-
-fn stored_dislike_decision(
-    content_store: &ContentStore,
-    item: &ContentItem,
-) -> Option<ContentDecision> {
-    match content_store.x_feedback_state(item) {
-        Ok(Some(state)) if state.active => Some(ContentDecision::hide(
-            item.client_id.clone(),
-            "WebLayer: hidden",
-            "Previously disliked",
-            1.0,
-        )),
-        Ok(_) => None,
-        Err(error) => {
-            warn!(
-                %error,
-                client_id = item.client_id.as_str(),
-                content_id = item.content_id.as_deref(),
-                "failed to read X feedback state"
-            );
-            None
-        }
-    }
-}
-
-fn cached_decide_items(
-    items: &[ContentItem],
-    ai_analyzer: &AiAnalyzer,
-    active_rules: &[AiContentRule],
-) -> Option<Vec<ContentDecision>> {
-    let ai_items: Vec<_> = items
-        .iter()
-        .filter(|item| should_ask_codex(item))
-        .cloned()
-        .collect();
-    let mut opinions_by_id: HashMap<_, _> = if ai_items.is_empty() {
-        HashMap::new()
-    } else {
-        ai_analyzer
-            .cached_x_opinions(&ai_items, active_rules)?
-            .into_iter()
-            .map(|opinion| (opinion.client_id.clone(), opinion))
-            .collect()
-    };
-    let mut decisions = Vec::with_capacity(items.len());
-
-    for item in items {
-        if let Some(opinion) = opinions_by_id.remove(&item.client_id) {
-            decisions.push(reviewed_item_decision(opinion));
-        } else if should_ask_codex(item) {
-            return None;
-        } else {
-            decisions.push(ContentDecision::keep(item.client_id.clone()));
-        }
-    }
-
-    Some(decisions)
-}
-
-fn content_batch_from_extracted(extracted_items: &[ExtractedItem]) -> AnalysisBatch {
+fn content_batch_from_extracted(extracted_items: &[extract::ExtractedItem]) -> AnalysisBatch {
     AnalysisBatch::new(
         "x.com",
         extracted_items
@@ -233,543 +102,5 @@ fn content_batch_from_extracted(extracted_items: &[ExtractedItem]) -> AnalysisBa
 fn record_content_batch(content_store: &ContentStore, content_batch: &AnalysisBatch) {
     if let Err(error) = content_store.record_x_batch(content_batch) {
         warn!(%error, "failed to store X content");
-    }
-}
-
-fn active_x_rules(content_store: &ContentStore) -> Vec<AiContentRule> {
-    match content_store.x_rules(RuleQuery {
-        status: Some("active".into()),
-        ..RuleQuery::default()
-    }) {
-        Ok(page) => page.items.into_iter().map(AiContentRule::from).collect(),
-        Err(error) => {
-            warn!(%error, "failed to load active X rules");
-            Vec::new()
-        }
-    }
-}
-
-fn reviewed_item_decision(opinion: AiOpinion) -> ContentDecision {
-    match opinion.action {
-        AiAction::Keep => ContentDecision::keep(opinion.client_id),
-        AiAction::Hide => ContentDecision::hide(
-            opinion.client_id,
-            "WebLayer: hidden by rule",
-            opinion.opinion,
-            opinion.confidence,
-        ),
-    }
-}
-
-fn extract_items(batch: &DomAnalysisBatch) -> Vec<ExtractedItem> {
-    let mut page_status_href = status_href_from_page(&batch.page.url);
-    let mut extracted_items = Vec::new();
-
-    for element in &batch.elements {
-        let Some(extracted) = extract_item(batch, element, page_status_href.as_deref()) else {
-            continue;
-        };
-
-        page_status_href = None;
-        extracted_items.push(extracted);
-    }
-
-    extracted_items
-}
-
-fn extract_item(
-    batch: &DomAnalysisBatch,
-    element: &DomElementSnapshot,
-    page_status_href: Option<&str>,
-) -> Option<ExtractedItem> {
-    if !has_post_region_evidence(element) {
-        return None;
-    }
-
-    let status_href = find_status_href(element).or_else(|| page_status_href.map(ToOwned::to_owned));
-    let post_id = status_href
-        .as_deref()
-        .and_then(x_status_id)
-        .map(ToOwned::to_owned);
-    post_id.as_ref()?;
-
-    let author = status_href.as_deref().and_then(author_handle);
-    let item = ContentItem {
-        client_id: element.client_id.clone(),
-        content_id: post_id,
-        url: status_href,
-        author,
-        text: element.text.clone(),
-        captured_at: element
-            .captured_at
-            .clone()
-            .or_else(|| batch.page.captured_at.clone()),
-        kind: Some("post".into()),
-        metadata: json!({
-            "pageUrl": batch.page.url,
-            "pageTitle": batch.page.title,
-            "selector": element.selector,
-            "tagName": element.tag_name,
-            "role": element.role,
-            "snapshotHash": element.snapshot_hash,
-        }),
-    };
-    trace_identified_post(&item);
-
-    let target = DomCommandTarget {
-        client_id: element.client_id.clone(),
-        selector: element.selector.clone(),
-        must_match_snapshot_hash: element.snapshot_hash.clone(),
-    };
-
-    Some(ExtractedItem { item, target })
-}
-
-fn has_post_region_evidence(element: &DomElementSnapshot) -> bool {
-    element
-        .tag_name
-        .as_deref()
-        .is_some_and(|tag_name| tag_name.eq_ignore_ascii_case("article"))
-        || element
-            .role
-            .as_deref()
-            .is_some_and(|role| role.eq_ignore_ascii_case("article"))
-        || has_root_attribute(element, "data-testid", "tweet")
-}
-
-fn has_root_attribute(element: &DomElementSnapshot, name: &str, value: &str) -> bool {
-    element.attributes.iter().any(|attribute| {
-        attribute.name.eq_ignore_ascii_case(name) && attribute.value.eq_ignore_ascii_case(value)
-    })
-}
-
-fn trace_identified_post(item: &ContentItem) {
-    if !tracing::enabled!(target: "weblayer_daemon::sites::x_com", Level::TRACE) {
-        return;
-    }
-
-    if let Ok(post_json) = serde_json::to_string(item) {
-        trace!(
-            target: "weblayer_daemon::sites::x_com",
-            client_id = item.client_id.as_str(),
-            content_id = item.content_id.as_deref(),
-            url = item.url.as_deref(),
-            post = %post_json,
-            "identified X post"
-        );
-    }
-}
-
-fn commands_from_decisions(
-    extracted_items: Vec<ExtractedItem>,
-    decisions: Vec<ContentDecision>,
-) -> Vec<DomCommand> {
-    let mut decisions_by_id: HashMap<_, _> = decisions
-        .into_iter()
-        .map(|decision| (decision.client_id.clone(), decision))
-        .collect();
-
-    extracted_items
-        .into_iter()
-        .flat_map(|extracted| {
-            let mut commands = vec![DomCommand::feedback_control(extracted.target.clone())];
-
-            if let Some(decision) = decisions_by_id.remove(&extracted.item.client_id) {
-                commands.push(DomCommand::from_decision(decision, extracted.target));
-            }
-
-            commands
-        })
-        .collect()
-}
-
-fn should_ask_codex(item: &ContentItem) -> bool {
-    has_prompt_content(item)
-}
-
-fn has_prompt_content(item: &ContentItem) -> bool {
-    !item.text.trim().is_empty()
-        || item
-            .url
-            .as_deref()
-            .is_some_and(|url| !url.trim().is_empty())
-}
-
-fn find_status_href(element: &DomElementSnapshot) -> Option<String> {
-    element
-        .links
-        .iter()
-        .find_map(|link| x_status_id(&link.href).map(|_| link.href.clone()))
-}
-
-fn status_href_from_page(url: &str) -> Option<String> {
-    x_status_id(url).map(|_| url.to_string())
-}
-
-fn x_status_id(url: &str) -> Option<&str> {
-    let marker = "/status/";
-    let start = url.find(marker)? + marker.len();
-    let rest = &url[start..];
-    let end = rest
-        .find(|character: char| !character.is_ascii_digit())
-        .unwrap_or(rest.len());
-
-    (end > 0).then_some(&rest[..end])
-}
-
-fn author_handle(url: &str) -> Option<String> {
-    let without_scheme = url
-        .trim()
-        .trim_start_matches("https://")
-        .trim_start_matches("http://")
-        .trim_start_matches("www.");
-    let path = without_scheme.split_once('/')?.1;
-    let handle = path.split_once("/status/")?.0.trim_matches('/');
-
-    (!handle.is_empty()).then(|| format!("@{handle}"))
-}
-
-struct ExtractedItem {
-    item: ContentItem,
-    target: DomCommandTarget,
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::{
-        ai::AiAnalyzer,
-        core::{DecisionAction, DomAttribute, DomLink, PageSnapshot},
-        storage::ContentStore,
-    };
-    use std::path::PathBuf;
-
-    fn batch(elements: Vec<DomElementSnapshot>) -> DomAnalysisBatch {
-        batch_with_url("https://x.com/home", elements)
-    }
-
-    fn batch_with_url(url: &str, elements: Vec<DomElementSnapshot>) -> DomAnalysisBatch {
-        DomAnalysisBatch {
-            page: PageSnapshot {
-                url: url.into(),
-                title: Some("X".into()),
-                captured_at: Some("2026-05-22T09:00:00.000Z".into()),
-            },
-            elements,
-        }
-    }
-
-    fn element(client_id: &str, text: &str, href: Option<&str>) -> DomElementSnapshot {
-        element_with_root(client_id, "article", None, text, href)
-    }
-
-    fn element_with_root(
-        client_id: &str,
-        tag_name: &str,
-        role: Option<&str>,
-        text: &str,
-        href: Option<&str>,
-    ) -> DomElementSnapshot {
-        DomElementSnapshot {
-            client_id: client_id.into(),
-            selector: Some(format!("{tag_name}:nth-of-type(1)")),
-            tag_name: Some(tag_name.into()),
-            role: role.map(ToOwned::to_owned),
-            text: text.into(),
-            html: None,
-            attributes: Vec::new(),
-            links: href
-                .map(|href| {
-                    vec![DomLink {
-                        href: href.into(),
-                        text: Some("status".into()),
-                        aria_label: None,
-                    }]
-                })
-                .unwrap_or_default(),
-            snapshot_hash: Some("hash1".into()),
-            captured_at: None,
-        }
-    }
-
-    fn data_testid_tweet_element(
-        client_id: &str,
-        text: &str,
-        href: Option<&str>,
-    ) -> DomElementSnapshot {
-        let mut element = element_with_root(client_id, "div", None, text, href);
-        element.attributes = vec![DomAttribute {
-            name: "data-testid".into(),
-            value: "tweet".into(),
-        }];
-        element
-    }
-
-    fn item(text: &str, url: Option<&str>) -> ContentItem {
-        ContentItem {
-            client_id: "test".into(),
-            content_id: None,
-            url: url.map(ToOwned::to_owned),
-            author: None,
-            text: text.into(),
-            captured_at: None,
-            kind: Some("post".into()),
-            metadata: serde_json::Value::Null,
-        }
-    }
-
-    fn content_item(client_id: &str, content_id: &str, text: &str) -> ContentItem {
-        ContentItem {
-            client_id: client_id.into(),
-            content_id: Some(content_id.into()),
-            url: Some(format!("https://x.com/user/status/{content_id}")),
-            author: Some("@user".into()),
-            text: text.into(),
-            captured_at: None,
-            kind: Some("post".into()),
-            metadata: serde_json::Value::Null,
-        }
-    }
-
-    fn temp_data_dir(name: &str) -> PathBuf {
-        let path = std::env::temp_dir().join(format!(
-            "weblayer-x-site-test-{name}-{}",
-            std::process::id()
-        ));
-        let _ = std::fs::remove_dir_all(&path);
-        path
-    }
-
-    fn content_store(name: &str) -> (ContentStore, PathBuf) {
-        let data_dir = temp_data_dir(name);
-        let store = ContentStore::with_data_dir(&data_dir).expect("content store should open");
-        (store, data_dir)
-    }
-
-    #[test]
-    fn extracts_x_post_from_dom_snapshot_link() {
-        let batch = batch(vec![element(
-            "client-1",
-            "A noisy article containing a post",
-            Some("https://x.com/alice/status/12345?s=20"),
-        )]);
-
-        let extracted = extract_items(&batch);
-
-        assert_eq!(extracted.len(), 1);
-        assert_eq!(extracted[0].item.content_id.as_deref(), Some("12345"));
-        assert_eq!(extracted[0].item.author.as_deref(), Some("@alice"));
-        assert_eq!(
-            extracted[0].target.must_match_snapshot_hash.as_deref(),
-            Some("hash1")
-        );
-    }
-
-    #[test]
-    fn ignores_x_dom_regions_without_status_identity() {
-        let batch = batch(vec![element("client-1", "navigation", None)]);
-
-        assert!(extract_items(&batch).is_empty());
-    }
-
-    #[test]
-    fn ignores_status_links_inside_non_post_regions() {
-        let batch = batch(vec![element_with_root(
-            "client-1",
-            "section",
-            None,
-            "What's happening Trending item",
-            Some("https://x.com/alice/status/12345?s=20"),
-        )]);
-
-        assert!(extract_items(&batch).is_empty());
-    }
-
-    #[test]
-    fn does_not_use_page_status_url_for_non_post_regions() {
-        let batch = batch_with_url(
-            "https://x.com/alice/status/12345",
-            vec![element_with_root(
-                "client-1",
-                "section",
-                None,
-                "What's happening Trending item",
-                None,
-            )],
-        );
-
-        assert!(extract_items(&batch).is_empty());
-    }
-
-    #[test]
-    fn uses_page_status_url_for_post_like_regions() {
-        let batch = batch_with_url(
-            "https://x.com/alice/status/12345",
-            vec![element("client-1", "Main post text", None)],
-        );
-
-        let extracted = extract_items(&batch);
-
-        assert_eq!(extracted.len(), 1);
-        assert_eq!(extracted[0].item.content_id.as_deref(), Some("12345"));
-        assert_eq!(
-            extracted[0].item.url.as_deref(),
-            Some("https://x.com/alice/status/12345")
-        );
-    }
-
-    #[test]
-    fn uses_page_status_url_for_only_one_post_like_region() {
-        let batch = batch_with_url(
-            "https://x.com/alice/status/12345",
-            vec![
-                element("client-1", "Main post text", None),
-                element("client-2", "Reply text without its own status link", None),
-            ],
-        );
-
-        let extracted = extract_items(&batch);
-
-        assert_eq!(extracted.len(), 1);
-        assert_eq!(extracted[0].item.client_id, "client-1");
-        assert_eq!(extracted[0].item.content_id.as_deref(), Some("12345"));
-    }
-
-    #[test]
-    fn data_testid_tweet_root_is_post_region_evidence() {
-        let batch = batch(vec![data_testid_tweet_element(
-            "client-1",
-            "Post text",
-            Some("https://x.com/alice/status/12345?s=20"),
-        )]);
-
-        assert_eq!(extract_items(&batch).len(), 1);
-    }
-
-    #[test]
-    fn posts_with_text_go_to_codex_for_review() {
-        assert!(should_ask_codex(&item("Just a normal post.", None)));
-    }
-
-    #[test]
-    fn url_only_posts_go_to_codex_for_review() {
-        assert!(should_ask_codex(&item(
-            "   ",
-            Some("https://x.com/user/status/1")
-        )));
-    }
-
-    #[test]
-    fn empty_posts_without_url_do_not_go_to_codex() {
-        assert!(!should_ask_codex(&item("   ", None)));
-    }
-
-    #[test]
-    fn cached_decisions_reuse_summary_without_showing_it() {
-        let cached_item = content_item("cached", "12345", "Timeline text");
-        let current_item = content_item("current", "12345", "Detail page text with extra context");
-        let ai_analyzer =
-            AiAnalyzer::for_tests_with_x_summaries(&[(&cached_item, "cached summary", 0.82)]);
-
-        let decisions = cached_decide_items(&[current_item], &ai_analyzer, &[])
-            .expect("summary should be cached");
-
-        assert_eq!(decisions.len(), 1);
-        assert!(matches!(decisions[0].action, DecisionAction::Keep));
-        assert_eq!(decisions[0].client_id, "current");
-        assert_eq!(decisions[0].label, None);
-    }
-
-    #[test]
-    fn cached_decisions_return_none_when_required_summary_is_missing() {
-        let current_item = content_item("current", "12345", "Needs a summary");
-        let ai_analyzer = AiAnalyzer::for_tests_with_x_summaries(&[]);
-
-        assert!(cached_decide_items(&[current_item], &ai_analyzer, &[]).is_none());
-    }
-
-    #[test]
-    fn rule_match_opinions_hide_posts() {
-        let decision = reviewed_item_decision(AiOpinion {
-            client_id: "client-1".into(),
-            action: AiAction::Hide,
-            opinion: "Matches low-value reaction rule".into(),
-            confidence: 0.91,
-            matched_rule_ids: vec!["x-engagement-bait-reaction".into()],
-        });
-
-        assert!(matches!(decision.action, DecisionAction::Hide));
-        assert_eq!(decision.client_id, "client-1");
-        assert_eq!(decision.label.as_deref(), Some("WebLayer: hidden by rule"));
-        assert_eq!(
-            decision.reason.as_deref(),
-            Some("Matches low-value reaction rule")
-        );
-        assert_eq!(decision.confidence, Some(0.91));
-    }
-
-    #[test]
-    fn pending_commands_install_feedback_controls_for_all_posts() {
-        let (content_store, data_dir) = content_store("pending-controls");
-        let cached_item = content_item("cached", "12345", "Timeline text");
-        let ai_analyzer =
-            AiAnalyzer::for_tests_with_x_summaries(&[(&cached_item, "cached summary", 0.82)]);
-        let batch = batch(vec![
-            element(
-                "client-1",
-                "Cached post text has changed",
-                Some("https://x.com/user/status/12345"),
-            ),
-            element(
-                "client-2",
-                "New post text",
-                Some("https://x.com/user/status/67890"),
-            ),
-        ]);
-
-        let commands = pending_dom_commands(&batch, &ai_analyzer, &content_store);
-
-        assert_eq!(commands.len(), 2);
-        assert!(commands.iter().all(|command| matches!(
-            command.action,
-            crate::core::DomCommandAction::InsertFeedbackControl
-        )));
-        assert_eq!(commands[0].target.client_id, "client-1");
-        assert_eq!(commands[1].target.client_id, "client-2");
-
-        let _ = std::fs::remove_dir_all(data_dir);
-    }
-
-    #[test]
-    fn thumbs_down_feedback_records_state_without_hiding_immediately() {
-        let (content_store, data_dir) = content_store("thumbs-down-state");
-        let batch = batch(vec![element(
-            "client-1",
-            "Post text",
-            Some("https://x.com/user/status/12345"),
-        )]);
-        let ai_analyzer = AiAnalyzer::for_tests_with_x_summaries(&[]);
-
-        let commands = apply_feedback(
-            &batch,
-            FeedbackKind::ThumbsDown,
-            "low quality",
-            &content_store,
-        );
-        let pending_commands = pending_dom_commands(&batch, &ai_analyzer, &content_store);
-
-        assert!(commands.is_empty());
-        assert_eq!(pending_commands.len(), 1);
-        assert_eq!(pending_commands[0].target.client_id, "client-1");
-        assert!(matches!(
-            pending_commands[0].action,
-            crate::core::DomCommandAction::Hide
-        ));
-        assert_eq!(
-            pending_commands[0].label.as_deref(),
-            Some("WebLayer: hidden")
-        );
-
-        let _ = std::fs::remove_dir_all(data_dir);
     }
 }
