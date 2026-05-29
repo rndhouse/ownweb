@@ -1,17 +1,22 @@
-# WebLayer Binary
+# WebLayer
 
-Single binary that can run the local REST daemon for the Chrome extension or
-act as a CLI client for a running daemon.
+WebLayer is a local web filtering daemon and CLI for user-controlled browsing
+rules. It stores encountered site content locally, records feedback, manages
+explicit filtering rules, and exposes a REST/WebSocket API for browser clients.
+Current site-specific behavior focuses on X/Twitter posts.
 
-## Run
+## Install
 
-Install the binary from crates.io:
+Install from crates.io:
 
 ```sh
 cargo install weblayer
 ```
 
-Start the daemon with:
+This installs the `weblayer` command. It can run the local daemon or act as a
+client for a daemon that is already running.
+
+## Run the Daemon
 
 ```sh
 weblayer daemon
@@ -23,8 +28,8 @@ The daemon binds to `127.0.0.1:17891` by default. Override it with:
 WEBLAYER_BIND_ADDR=127.0.0.1:19000 weblayer daemon
 ```
 
-Daemon output goes through structured logs on stdout. The default log level is
-`debug`; override it with `RUST_LOG`.
+Daemon output uses structured logs on stdout. The default log level is `debug`;
+override it with `RUST_LOG`.
 
 Incoming posts are not logged by default. To enable captured-content log events:
 
@@ -32,51 +37,9 @@ Incoming posts are not logged by default. To enable captured-content log events:
 WEBLAYER_LOG_CAPTURED_CONTENT=1 weblayer daemon
 ```
 
-Encountered site content is stored in per-site SQLite databases under the local
-WebLayer data directory. X posts are stored at:
-
-```text
-~/.local/share/weblayer/x.com/db.sqlite
-```
-
-X feedback is stored in the same database as both an append-only event log and
-current feedback state. A stored active thumbs-down makes later scans hide that
-post by X status ID.
-
-Override the root data directory with `WEBLAYER_DATA_DIR`. The daemon uses
-bundled SQLite through Rust dependencies, so no separate SQLite service or
-system install is required.
-
-For development, reset the X database on startup with:
-
-```sh
-WEBLAYER_X_RESET_DB=1 weblayer daemon
-```
-
-This removes `db.sqlite`, `db.sqlite-wal`, and `db.sqlite-shm` for `x.com`
-before the daemon opens storage.
-
-Codex app-server analysis is enabled by default. The daemon starts a local
-Codex app-server process when needed, keeps one app-server thread alive across
-requests, and asks it to evaluate captured X/Twitter posts against active
-content rules. During development, every captured X post with text or a URL is
-sent to Codex so the daemon can exercise the analysis loop.
-
-Opinions are cached in memory by X status ID, a normalized fallback key, and the
-active rule set. This lets the timeline view and single-post view reuse the same
-AI decision when they capture the same post content under the same policy.
-
-Cache hits and X posts sent to the Codex app-server are logged at debug level
-on stdout. Repeated full captured post payloads from DOM extraction are trace
-level:
-
-```sh
-weblayer daemon
-```
-
 ## CLI
 
-Without `daemon`, the binary talks to a running local daemon. `weblayer` with no
+Without `daemon`, `weblayer` talks to a running local daemon. `weblayer` with no
 subcommand behaves like `weblayer status`.
 
 ```sh
@@ -110,6 +73,50 @@ weblayer annotations put \
 Client commands use `http://127.0.0.1:17891` by default. Override that with
 `--daemon-origin` or `WEBLAYER_DAEMON_ORIGIN`.
 
+## Local Data
+
+Encountered site content is stored in per-site SQLite databases under the
+WebLayer data directory. X posts are stored at:
+
+```text
+~/.local/share/weblayer/x.com/db.sqlite
+```
+
+X feedback is stored in the same database as both an append-only event log and
+current feedback state. A stored active thumbs-down makes later scans hide that
+post by X status ID.
+
+Override the root data directory with `WEBLAYER_DATA_DIR`. The daemon uses
+bundled SQLite through Rust dependencies, so no separate SQLite service or
+system install is required.
+
+Reset the X database on startup with:
+
+```sh
+WEBLAYER_X_RESET_DB=1 weblayer daemon
+```
+
+This removes `db.sqlite`, `db.sqlite-wal`, and `db.sqlite-shm` for `x.com`
+before the daemon opens storage.
+
+## Analysis
+
+Codex app-server analysis is enabled by default. The daemon starts a local
+Codex app-server process when needed, keeps one app-server thread alive across
+requests, and asks it to evaluate captured X/Twitter posts against active
+content rules. Every captured X post with text or a URL is sent to Codex so the
+daemon can evaluate it against the active rule set.
+
+Opinions are cached in memory by X status ID, a normalized fallback key, and the
+active rule set. This lets the timeline view and single-post view reuse the same
+AI decision when they capture the same post content under the same policy.
+
+Cache hits and X posts sent to the Codex app-server are logged at debug level
+on stdout. Repeated full captured post payloads from DOM extraction are logged
+at trace level.
+
+## Configuration
+
 Useful environment variables:
 
 ```sh
@@ -128,7 +135,7 @@ WEBLAYER_X_SUMMARY_CACHE_TTL_SECS=86400
 RUST_LOG=debug
 ```
 
-## Endpoints
+## API Reference
 
 - `GET /health`
 - `GET /v1/events`
@@ -203,7 +210,7 @@ GET /v1/rule-suggestions?site=x.com&minFeedback=2&limit=20
 Suggestions are not stored and are never active automatically. Use their title,
 instruction, and examples to create an explicit draft rule after review.
 
-Annotation request shape:
+Content annotation request shape:
 
 ```json
 {
@@ -217,7 +224,7 @@ Annotation request shape:
 }
 ```
 
-Request shape:
+DOM analysis request shape:
 
 ```json
 {
@@ -249,7 +256,7 @@ Request shape:
 }
 ```
 
-Response shape:
+DOM analysis response shape:
 
 ```json
 {
