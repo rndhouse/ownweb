@@ -1,4 +1,5 @@
 use reqwest::Client;
+use rusqlite::Connection;
 use serde_json::{json, Value};
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -25,6 +26,9 @@ async fn codex_rule_proposal_from_curated_feedback() -> TestResult<()> {
 
     let fixtures = curated_feedback();
     let analyze_response = daemon.analyze(&fixtures).await?;
+    let rule_stats = rule_decision_stats(daemon.data_dir_path())?;
+    assert_rule_has_nonzero_counts(&rule_stats, "x-engagement-bait-reaction")?;
+
     let context_ids = feedback_context_ids_by_client_id(&analyze_response)?;
     for fixture in &fixtures {
         let context_id = context_ids
@@ -36,21 +40,13 @@ async fn codex_rule_proposal_from_curated_feedback() -> TestResult<()> {
     let feedback = daemon.get("/v1/feedback?site=x.com&limit=20").await?;
     assert_eq!(feedback["totalMatching"], json!(fixtures.len()));
 
-    let proposal = daemon
-        .post(
-            "/v1/rule-proposals?site=x.com",
-            json!({
-                "minFeedback": 2,
-                "feedbackLimit": 20
-            }),
-        )
-        .await?;
+    let proposal = daemon.agent_rule_proposal(2, 20).await?;
     assert_proposal_invariants(&proposal, fixtures.len())?;
     assert_eq!(proposal["proposal"]["source"], json!("agent:codex-app"));
 
-    let artifact = write_artifacts("curated", &feedback, &proposal)?;
+    let artifact = write_artifacts("curated", &feedback, &proposal, &rule_stats)?;
     eprintln!("wrote Codex E2E artifacts to {}", artifact.display());
-    eprintln!("{}", proposal_summary(&proposal));
+    eprintln!("{}", proposal_summary(&proposal, &rule_stats));
 
     Ok(())
 }
@@ -86,21 +82,14 @@ async fn codex_rule_proposal_from_local_data_copy() -> TestResult<()> {
         return Ok(());
     }
 
-    let proposal = daemon
-        .post(
-            "/v1/rule-proposals?site=x.com",
-            json!({
-                "minFeedback": 1,
-                "feedbackLimit": 20
-            }),
-        )
-        .await?;
+    let proposal = daemon.agent_rule_proposal(1, 20).await?;
     assert_proposal_invariants(&proposal, feedback_count.min(20))?;
     assert_eq!(proposal["proposal"]["source"], json!("agent:codex-app"));
 
-    let artifact = write_artifacts("local-copy", &feedback, &proposal)?;
+    let rule_stats = rule_decision_stats(daemon.data_dir_path())?;
+    let artifact = write_artifacts("local-copy", &feedback, &proposal, &rule_stats)?;
     eprintln!("wrote Codex E2E artifacts to {}", artifact.display());
-    eprintln!("{}", proposal_summary(&proposal));
+    eprintln!("{}", proposal_summary(&proposal, &rule_stats));
 
     Ok(())
 }
@@ -145,7 +134,7 @@ fn curated_feedback() -> Vec<FeedbackFixture> {
 struct TestDaemon {
     origin: String,
     child: Child,
-    _data_dir: TempDir,
+    data_dir: TempDir,
 }
 
 impl TestDaemon {
@@ -172,8 +161,12 @@ impl TestDaemon {
         Ok(Self {
             origin: format!("http://127.0.0.1:{http_port}"),
             child,
-            _data_dir: data_dir,
+            data_dir,
         })
+    }
+
+    fn data_dir_path(&self) -> &Path {
+        self.data_dir.path()
     }
 
     async fn wait_until_ready(&self) -> TestResult<()> {
@@ -241,6 +234,35 @@ impl TestDaemon {
         )
         .await?;
         Ok(())
+    }
+
+    async fn agent_rule_proposal(
+        &self,
+        min_feedback: usize,
+        feedback_limit: usize,
+    ) -> TestResult<Value> {
+        let mut last_proposal = None;
+        for attempt in 1..=2 {
+            let proposal = self
+                .post(
+                    "/v1/rule-proposals?site=x.com",
+                    json!({
+                        "minFeedback": min_feedback,
+                        "feedbackLimit": feedback_limit
+                    }),
+                )
+                .await?;
+            if proposal["proposal"]["source"] == json!("agent:codex-app") {
+                return Ok(proposal);
+            }
+            eprintln!(
+                "rule proposal attempt {attempt} used {}; retrying once if available",
+                proposal["proposal"]["source"].as_str().unwrap_or("unknown")
+            );
+            last_proposal = Some(proposal);
+        }
+
+        Ok(last_proposal.expect("proposal attempts should record a result"))
     }
 }
 
@@ -363,7 +385,73 @@ fn assert_proposal_invariants(proposal: &Value, expected_feedback_count: usize) 
     Ok(())
 }
 
-fn write_artifacts(label: &str, feedback: &Value, proposal: &Value) -> TestResult<PathBuf> {
+#[derive(Debug, Clone)]
+struct RuleStat {
+    rule_id: String,
+    matched_count: usize,
+    hide_count: usize,
+}
+
+fn rule_decision_stats(data_dir: &Path) -> TestResult<Vec<RuleStat>> {
+    let connection = Connection::open(data_dir.join("x.com/db.sqlite"))?;
+    let mut statement = connection.prepare(
+        "
+        SELECT action, matched_rule_ids_json
+        FROM content_decision_events
+        ",
+    )?;
+    let rows = statement.query_map([], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+    })?;
+    let mut stats = BTreeMap::<String, (usize, usize)>::new();
+
+    for row in rows {
+        let (action, matched_rule_ids_json) = row?;
+        let matched_rule_ids: Vec<String> = serde_json::from_str(&matched_rule_ids_json)?;
+        let unique_rule_ids = matched_rule_ids.into_iter().collect::<BTreeSet<_>>();
+
+        for rule_id in unique_rule_ids {
+            let entry = stats.entry(rule_id).or_default();
+            entry.0 += 1;
+            if action == "hide" {
+                entry.1 += 1;
+            }
+        }
+    }
+
+    Ok(stats
+        .into_iter()
+        .map(|(rule_id, (matched_count, hide_count))| RuleStat {
+            rule_id,
+            matched_count,
+            hide_count,
+        })
+        .collect())
+}
+
+fn assert_rule_has_nonzero_counts(stats: &[RuleStat], rule_id: &str) -> TestResult<()> {
+    let stat = stats
+        .iter()
+        .find(|stat| stat.rule_id == rule_id)
+        .ok_or_else(|| format!("missing decision stats for rule {rule_id}"))?;
+    assert!(
+        stat.matched_count > 0,
+        "expected non-zero matched count for {rule_id}"
+    );
+    assert!(
+        stat.hide_count > 0,
+        "expected non-zero hide count for {rule_id}"
+    );
+
+    Ok(())
+}
+
+fn write_artifacts(
+    label: &str,
+    feedback: &Value,
+    proposal: &Value,
+    rule_stats: &[RuleStat],
+) -> TestResult<PathBuf> {
     let dir = env::var("WEBLAYER_E2E_ARTIFACT_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|_| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/codex-e2e"));
@@ -374,15 +462,31 @@ fn write_artifacts(label: &str, feedback: &Value, proposal: &Value) -> TestResul
     let md_path = dir.join(format!("{stem}.md"));
     let artifact = json!({
         "feedback": feedback,
-        "proposal": proposal
+        "proposal": proposal,
+        "ruleStats": rule_stats_json(rule_stats)
     });
     fs::write(&json_path, serde_json::to_string_pretty(&artifact)?)?;
-    fs::write(&md_path, proposal_summary(proposal))?;
+    fs::write(&md_path, proposal_summary(proposal, rule_stats))?;
 
     Ok(json_path)
 }
 
-fn proposal_summary(response: &Value) -> String {
+fn rule_stats_json(rule_stats: &[RuleStat]) -> Value {
+    Value::Array(
+        rule_stats
+            .iter()
+            .map(|stat| {
+                json!({
+                    "ruleId": stat.rule_id,
+                    "matchedCount": stat.matched_count,
+                    "hideCount": stat.hide_count
+                })
+            })
+            .collect(),
+    )
+}
+
+fn proposal_summary(response: &Value, rule_stats: &[RuleStat]) -> String {
     let proposal = &response["proposal"];
     let mut text = String::new();
     text.push_str(&format!(
@@ -396,6 +500,18 @@ fn proposal_summary(response: &Value) -> String {
         proposal["feedbackCount"].as_u64().unwrap_or(0),
         proposal["activeRuleCount"].as_u64().unwrap_or(0)
     ));
+    text.push_str("## Rule Stats\n\n");
+    if rule_stats.is_empty() {
+        text.push_str("No rule decision stats were recorded before proposal generation.\n\n");
+    } else {
+        for stat in rule_stats {
+            text.push_str(&format!(
+                "- `{}`: matched {}, hid {}\n",
+                stat.rule_id, stat.matched_count, stat.hide_count
+            ));
+        }
+        text.push('\n');
+    }
     text.push_str("## Changes\n\n");
 
     for change in proposal["changes"]
