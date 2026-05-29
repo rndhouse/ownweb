@@ -28,6 +28,18 @@ const DEFAULT_RULE_SOURCE: &str = "seed";
 const DEFAULT_NEW_RULE_STATUS: &str = "draft";
 const DEFAULT_NEW_RULE_PRIORITY: i64 = 100;
 const RULE_AUDIT_LIMIT: usize = 50;
+const CONTENT_RULE_COLUMNS: &str = concat!(
+    "id, ",
+    "site, ",
+    "status, ",
+    "priority, ",
+    "title, ",
+    "instruction, ",
+    "created_source, ",
+    "created_at_unix_ms, ",
+    "updated_at_unix_ms, ",
+    "examples_json"
+);
 
 pub(super) struct Store {
     connection: Connection,
@@ -457,49 +469,21 @@ impl Store {
             |row| row.get::<_, i64>(0),
         )?;
 
-        let mut statement = self.connection.prepare(
+        let sql = format!(
             "
-            SELECT
-                id,
-                site,
-                status,
-                priority,
-                title,
-                instruction,
-                created_source,
-                created_at_unix_ms,
-                updated_at_unix_ms,
-                examples_json
+            SELECT {CONTENT_RULE_COLUMNS}
             FROM content_rules
             WHERE (?1 IS NULL OR status = ?1)
             ORDER BY priority ASC, id ASC
             LIMIT ?2 OFFSET ?3
-            ",
-        )?;
+            "
+        );
+        let mut statement = self.connection.prepare(&sql)?;
         let items = statement
-            .query_map(params![status.as_deref(), limit, offset], |row| {
-                let examples_json: String = row.get(9)?;
-                let examples = serde_json::from_str(&examples_json).map_err(|error| {
-                    rusqlite::Error::FromSqlConversionFailure(
-                        9,
-                        rusqlite::types::Type::Text,
-                        Box::new(error),
-                    )
-                })?;
-
-                Ok(ContentRule {
-                    id: row.get(0)?,
-                    site: row.get(1)?,
-                    status: row.get(2)?,
-                    priority: row.get(3)?,
-                    title: row.get(4)?,
-                    instruction: row.get(5)?,
-                    created_source: row.get(6)?,
-                    created_at_unix_ms: row.get(7)?,
-                    updated_at_unix_ms: row.get(8)?,
-                    examples,
-                })
-            })?
+            .query_map(
+                params![status.as_deref(), limit, offset],
+                content_rule_from_row,
+            )?
             .collect::<std::result::Result<Vec<_>, _>>()?;
 
         Ok(RulePage {
@@ -783,28 +767,7 @@ impl Store {
     }
 
     fn rule(&self, id: &str) -> super::Result<Option<ContentRule>> {
-        Ok(self
-            .connection
-            .query_row(
-                "
-                SELECT
-                    id,
-                    site,
-                    status,
-                    priority,
-                    title,
-                    instruction,
-                    created_source,
-                    created_at_unix_ms,
-                    updated_at_unix_ms,
-                    examples_json
-                FROM content_rules
-                WHERE id = ?1
-                ",
-                [id],
-                content_rule_from_row,
-            )
-            .optional()?)
+        load_rule(&self.connection, id)
     }
 
     fn rule_audit(&self, id: &str, limit: usize) -> super::Result<Vec<RuleAuditEvent>> {
@@ -838,27 +801,13 @@ impl Store {
         source: &str,
         created_at_unix_ms: i64,
     ) -> super::Result<()> {
-        let snapshot_json = serde_json::to_string(rule)?;
-        self.connection.execute(
-            "
-            INSERT INTO content_rule_events (
-                rule_id,
-                event_kind,
-                source,
-                created_at_unix_ms,
-                snapshot_json
-            ) VALUES (?1, ?2, ?3, ?4, ?5)
-            ",
-            params![
-                rule.id.as_str(),
-                event_kind,
-                source,
-                created_at_unix_ms,
-                snapshot_json
-            ],
-        )?;
-
-        Ok(())
+        insert_rule_event(
+            &self.connection,
+            rule,
+            event_kind,
+            source,
+            created_at_unix_ms,
+        )
     }
 
     pub(super) fn content_stats(&self) -> super::Result<ContentStats> {
@@ -1335,55 +1284,11 @@ fn seed_default_rules(connection: &Connection) -> super::Result<()> {
             examples_json,
         ],
     )?;
-    let event_count = connection.query_row(
-        "
-        SELECT COUNT(*)
-        FROM content_rule_events
-        WHERE rule_id = ?1
-        ",
-        [DEFAULT_RULE_ID],
-        |row| row.get::<_, i64>(0),
-    )?;
-    if event_count == 0 {
-        let rule = connection.query_row(
-            "
-            SELECT
-                id,
-                site,
-                status,
-                priority,
-                title,
-                instruction,
-                created_source,
-                created_at_unix_ms,
-                updated_at_unix_ms,
-                examples_json
-            FROM content_rules
-            WHERE id = ?1
-            ",
-            [DEFAULT_RULE_ID],
-            content_rule_from_row,
-        )?;
-        let snapshot_json = serde_json::to_string(&rule)?;
+    if rule_event_count(connection, DEFAULT_RULE_ID)? == 0 {
+        let rule = load_rule(connection, DEFAULT_RULE_ID)?
+            .expect("default rule should exist after seed insert");
         let event_kind = if inserted > 0 { "created" } else { "imported" };
-        connection.execute(
-            "
-            INSERT INTO content_rule_events (
-                rule_id,
-                event_kind,
-                source,
-                created_at_unix_ms,
-                snapshot_json
-            ) VALUES (?1, ?2, ?3, ?4, ?5)
-            ",
-            params![
-                DEFAULT_RULE_ID,
-                event_kind,
-                rule.created_source,
-                now,
-                snapshot_json
-            ],
-        )?;
+        insert_rule_event(connection, &rule, event_kind, &rule.created_source, now)?;
     }
 
     Ok(())
@@ -1485,6 +1390,61 @@ fn content_rule_from_row(row: &Row<'_>) -> rusqlite::Result<ContentRule> {
         updated_at_unix_ms: row.get(8)?,
         examples,
     })
+}
+
+fn load_rule(connection: &Connection, id: &str) -> super::Result<Option<ContentRule>> {
+    let sql = format!(
+        "
+        SELECT {CONTENT_RULE_COLUMNS}
+        FROM content_rules
+        WHERE id = ?1
+        "
+    );
+    Ok(connection
+        .query_row(&sql, [id], content_rule_from_row)
+        .optional()?)
+}
+
+fn rule_event_count(connection: &Connection, rule_id: &str) -> super::Result<i64> {
+    Ok(connection.query_row(
+        "
+        SELECT COUNT(*)
+        FROM content_rule_events
+        WHERE rule_id = ?1
+        ",
+        [rule_id],
+        |row| row.get::<_, i64>(0),
+    )?)
+}
+
+fn insert_rule_event(
+    connection: &Connection,
+    rule: &ContentRule,
+    event_kind: &str,
+    source: &str,
+    created_at_unix_ms: i64,
+) -> super::Result<()> {
+    let snapshot_json = serde_json::to_string(rule)?;
+    connection.execute(
+        "
+        INSERT INTO content_rule_events (
+            rule_id,
+            event_kind,
+            source,
+            created_at_unix_ms,
+            snapshot_json
+        ) VALUES (?1, ?2, ?3, ?4, ?5)
+        ",
+        params![
+            rule.id.as_str(),
+            event_kind,
+            source,
+            created_at_unix_ms,
+            snapshot_json
+        ],
+    )?;
+
+    Ok(())
 }
 
 fn rule_audit_event_from_row(row: &Row<'_>) -> rusqlite::Result<RuleAuditEvent> {
