@@ -148,9 +148,11 @@ Content-Type: application/json
 
 Rule proposals use the Codex app agent when available. The prompt includes
 current active rules, active feedback, and the rule snapshots that were in play
-when each feedback event was recorded. The proposal can contain `createRule`,
-`updateRule`, `disableRule`, and `noChange` actions. Proposals are stored for
-review and are not applied automatically.
+when each feedback event was recorded. It also includes simple rule-value
+counts from final decisions: how many times each active rule matched and how
+many times it hid content. The proposal can contain `createRule`, `updateRule`,
+`disableRule`, and `noChange` actions. Proposals are stored for review and are
+not applied automatically.
 
 Inspect stored proposals:
 

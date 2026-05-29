@@ -4,7 +4,10 @@ use super::rules::{
 };
 use super::*;
 use crate::{
-    core::{AnalysisBatch, ContentItem, FeedbackContext, FeedbackKind, FeedbackRuleContext},
+    core::{
+        AnalysisBatch, ContentDecision, ContentItem, FeedbackContext, FeedbackKind,
+        FeedbackRuleContext,
+    },
     storage::{
         ContentAnnotationInput, ContentAnnotationQuery, ContentQuery, RuleCreateInput,
         RuleExamples, RuleQuery, RuleSetProposalAction, RuleSetProposalChange,
@@ -133,6 +136,65 @@ fn content_stats_count_unique_posts_and_encounters() {
     assert_eq!(stats.items_with_stable_id, 2);
     assert!(stats.first_seen_at_unix_ms.is_some());
     assert!(stats.last_seen_at_unix_ms.is_some());
+
+    let _ = std::fs::remove_dir_all(db_path.parent().unwrap().parent().unwrap());
+}
+
+#[test]
+fn records_rule_decision_events_and_stats() {
+    let db_path = temp_db_path("records-decision-events");
+    let mut store = Store::open(&db_path).expect("store should open");
+    let first = item("client-1", Some("123"), "engagement bait one");
+    let second = item("client-2", Some("456"), "engagement bait two");
+    let kept = item("client-3", Some("789"), "ordinary post");
+
+    store
+        .record_batch(&batch(
+            "x.com",
+            vec![first.clone(), second.clone(), kept.clone()],
+        ))
+        .expect("content should store");
+    assert!(store
+        .record_decision_event(
+            &first,
+            &ContentDecision::hide(
+                "client-1",
+                "WebLayer: hidden by rule",
+                "Matched engagement bait",
+                0.91,
+            )
+            .with_matched_rule_ids(vec!["x-engagement".into()]),
+            "test",
+        )
+        .expect("decision should store"));
+    assert!(store
+        .record_decision_event(
+            &second,
+            &ContentDecision::hide(
+                "client-2",
+                "WebLayer: hidden by rule",
+                "Matched two rules",
+                0.88,
+            )
+            .with_matched_rule_ids(vec!["x-engagement".into(), "x-bait".into()]),
+            "test",
+        )
+        .expect("decision should store"));
+    assert!(!store
+        .record_decision_event(&kept, &ContentDecision::keep("client-3"), "test")
+        .expect("plain keep should be skipped"));
+
+    let stats = store
+        .rule_decision_stats()
+        .expect("rule decision stats should load");
+
+    assert_eq!(stats.len(), 2);
+    assert_eq!(stats[0].rule_id, "x-bait");
+    assert_eq!(stats[0].matched_count, 1);
+    assert_eq!(stats[0].hide_count, 1);
+    assert_eq!(stats[1].rule_id, "x-engagement");
+    assert_eq!(stats[1].matched_count, 2);
+    assert_eq!(stats[1].hide_count, 2);
 
     let _ = std::fs::remove_dir_all(db_path.parent().unwrap().parent().unwrap());
 }

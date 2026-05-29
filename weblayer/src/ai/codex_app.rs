@@ -1,12 +1,12 @@
 use super::{AiAction, AiContentRule, AiOpinion};
 use crate::{
     core::ContentItem,
-    storage::{ContentRule, RuleSetProposalChange, XDislikedPost},
+    storage::{ContentRule, RuleDecisionStats, RuleSetProposalChange, XDislikedPost},
 };
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::{fmt, path::Path, process::Stdio, time::Duration};
+use std::{collections::HashMap, fmt, path::Path, process::Stdio, time::Duration};
 use tokio::{
     net::TcpStream,
     process::{Child, Command},
@@ -77,9 +77,10 @@ impl CodexAppAnalyzer {
         &self,
         feedback: &[XDislikedPost],
         active_rules: &[ContentRule],
+        rule_stats: &[RuleDecisionStats],
     ) -> Result<Vec<RuleSetProposalChange>, CodexAppError> {
         let prompt_feedback = prompt_feedback(feedback);
-        let prompt_rules = prompt_rule_set_rules(active_rules);
+        let prompt_rules = prompt_rule_set_rules(active_rules, rule_stats);
 
         match timeout(
             self.config.request_timeout,
@@ -516,6 +517,8 @@ struct PromptRuleSetRule {
     instruction: String,
     positive_examples: Vec<String>,
     negative_examples: Vec<String>,
+    matched_count: usize,
+    hide_count: usize,
 }
 
 #[derive(Debug, Serialize)]
@@ -605,17 +608,30 @@ fn prompt_rules(rules: &[AiContentRule]) -> Vec<PromptRule> {
         .collect()
 }
 
-fn prompt_rule_set_rules(rules: &[ContentRule]) -> Vec<PromptRuleSetRule> {
+fn prompt_rule_set_rules(
+    rules: &[ContentRule],
+    rule_stats: &[RuleDecisionStats],
+) -> Vec<PromptRuleSetRule> {
+    let stats_by_rule_id = rule_stats
+        .iter()
+        .map(|stats| (stats.rule_id.as_str(), stats))
+        .collect::<HashMap<_, _>>();
+
     rules
         .iter()
-        .map(|rule| PromptRuleSetRule {
-            id: rule.id.clone(),
-            status: rule.status.clone(),
-            priority: rule.priority,
-            title: rule.title.clone(),
-            instruction: rule.instruction.clone(),
-            positive_examples: rule.examples.positive.clone(),
-            negative_examples: rule.examples.negative.clone(),
+        .map(|rule| {
+            let stats = stats_by_rule_id.get(rule.id.as_str());
+            PromptRuleSetRule {
+                id: rule.id.clone(),
+                status: rule.status.clone(),
+                priority: rule.priority,
+                title: rule.title.clone(),
+                instruction: rule.instruction.clone(),
+                positive_examples: rule.examples.positive.clone(),
+                negative_examples: rule.examples.negative.clone(),
+                matched_count: stats.map(|stats| stats.matched_count).unwrap_or(0),
+                hide_count: stats.map(|stats| stats.hide_count).unwrap_or(0),
+            }
         })
         .collect()
 }
@@ -669,7 +685,7 @@ fn build_rule_set_proposal_prompt(
     let feedback_json = serde_json::to_string(feedback)?;
     let active_rules_json = serde_json::to_string(active_rules)?;
     Ok(format!(
-        "Create a reviewable rule-set proposal for WebLayer X filtering. Current active rules JSON: {active_rules_json}\nActive user feedback JSON: {feedback_json}\nReconcile the feedback with the current active rules. Use the feedback-time rulesAtFeedback and matchedRuleIds to distinguish uncovered feedback from feedback that already had a rule in play. Avoid duplicate rules and avoid broad overlapping rules. Prefer updateRule when feedback is clearly evidence for an existing active rule. Use createRule only for a coherent uncovered theme, and set status to \"draft\". Use disableRule only when an active rule is redundant with another active rule or clearly obsolete. Use noChange when feedback is too sparse or already covered. For updateRule, include the existing ruleId and only fields that should change; include positive examples when feedback should become rule evidence. For disableRule, include the existing ruleId and status \"disabled\". Put feedback storage keys in evidenceStorageKeys. Keep rationales under 160 characters. Return only JSON matching the schema."
+        "Create a reviewable rule-set proposal for WebLayer X filtering. Current active rules JSON: {active_rules_json}\nActive user feedback JSON: {feedback_json}\nReconcile the feedback with the current active rules. Active rule matchedCount and hideCount show how often each rule has matched and hidden content in final daemon decisions. Use the feedback-time rulesAtFeedback and matchedRuleIds to distinguish uncovered feedback from feedback that already had a rule in play. Avoid duplicate rules and avoid broad overlapping rules. Prefer updateRule when feedback is clearly evidence for an existing active rule. Use createRule only for a coherent uncovered theme, and set status to \"draft\". Use disableRule only when an active rule is redundant with another active rule or clearly obsolete. Use noChange when feedback is too sparse or already covered. For updateRule, include the existing ruleId and only fields that should change; include positive examples when feedback should become rule evidence. For disableRule, include the existing ruleId and status \"disabled\". Put feedback storage keys in evidenceStorageKeys. Keep rationales under 160 characters. Return only JSON matching the schema."
     ))
 }
 
@@ -920,6 +936,8 @@ mod tests {
             instruction: "Downrank engagement bait reaction posts.".into(),
             positive_examples: Vec::new(),
             negative_examples: Vec::new(),
+            matched_count: 12,
+            hide_count: 8,
         }];
 
         let prompt =
@@ -928,6 +946,8 @@ mod tests {
         assert!(prompt.contains("Current active rules JSON"));
         assert!(prompt.contains("rulesAtFeedback"));
         assert!(prompt.contains("matchedRuleIds"));
+        assert!(prompt.contains("matchedCount"));
+        assert!(prompt.contains("hideCount"));
         assert!(prompt.contains("reply yes if you agree"));
         assert!(prompt.contains("Prefer updateRule"));
     }

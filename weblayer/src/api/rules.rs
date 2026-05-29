@@ -33,7 +33,7 @@ pub(super) async fn create_rule_set_proposal(
         .unwrap_or(DEFAULT_RULE_LIMIT)
         .min(MAX_RULE_LIMIT);
 
-    let (feedback, active_rules) = match site {
+    let (feedback, active_rules, rule_stats) = match site {
         SiteScope::XCom => {
             let feedback = state
                 .content_store
@@ -51,7 +51,8 @@ pub(super) async fn create_rule_set_proposal(
                     offset: 0,
                 })?
                 .items;
-            (feedback, active_rules)
+            let rule_stats = state.content_store.x_rule_decision_stats()?;
+            (feedback, active_rules, rule_stats)
         }
     };
 
@@ -65,7 +66,7 @@ pub(super) async fn create_rule_set_proposal(
         )
     } else if let Some(changes) = state
         .ai_analyzer
-        .x_rule_set_proposal(&feedback, &active_rules)
+        .x_rule_set_proposal(&feedback, &active_rules, &rule_stats)
         .await
     {
         ("agent:codex-app".to_string(), changes)

@@ -1,5 +1,6 @@
 mod annotations;
 mod content;
+mod decisions;
 mod feedback;
 mod rules;
 mod schema;

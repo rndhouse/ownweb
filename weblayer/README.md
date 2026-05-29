@@ -204,9 +204,10 @@ only `active` rules are sent to the AI analyzer. Rule status values are
 `draft`, `active`, `disabled`, and `archived`.
 `/v1/rule-proposals` generates and stores reviewable rule-set change proposals
 from active feedback. Proposal generation sends active feedback, current active
-rules, and feedback-time rule snapshots to the Codex app agent when available.
-If the agent is unavailable, the daemon stores a heuristic proposal derived from
-feedback reasons so the review pipeline remains testable.
+rules, feedback-time rule snapshots, and simple per-rule match/hide counts to
+the Codex app agent when available. If the agent is unavailable, the daemon
+stores a heuristic proposal derived from feedback reasons so the review
+pipeline remains testable.
 
 Rule create request shape:
 

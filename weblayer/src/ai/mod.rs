@@ -3,7 +3,7 @@ mod summary_cache;
 
 use crate::{
     core::ContentItem,
-    storage::{ContentRule, RuleSetProposalChange, XDislikedPost},
+    storage::{ContentRule, RuleDecisionStats, RuleSetProposalChange, XDislikedPost},
 };
 use std::{
     collections::HashMap,
@@ -129,12 +129,16 @@ impl AiAnalyzer {
         &self,
         feedback: &[XDislikedPost],
         active_rules: &[ContentRule],
+        rule_stats: &[RuleDecisionStats],
     ) -> Option<Vec<RuleSetProposalChange>> {
         let Some(codex_app) = self.codex_app.as_ref() else {
             return None;
         };
 
-        match codex_app.x_rule_set_proposal(feedback, active_rules).await {
+        match codex_app
+            .x_rule_set_proposal(feedback, active_rules, rule_stats)
+            .await
+        {
             Ok(changes) => Some(changes),
             Err(error) => {
                 warn!(%error, "codex app-server rule proposal unavailable");

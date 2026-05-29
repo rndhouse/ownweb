@@ -32,6 +32,12 @@ pub async fn analyze_dom(
     let feedback_context = feedback_context_from_active_rules(&active_rules);
     let decisions = decide::decide_items(&content_batch.items, ai_analyzer, &active_rules).await;
     let decisions = decide::apply_stored_feedback(content_store, &content_batch.items, decisions);
+    decide::record_decision_events(
+        content_store,
+        &content_batch.items,
+        &decisions,
+        "domAnalysis",
+    );
     commands::commands_from_decisions(extracted_items, decisions, &feedback_context, content_store)
 }
 
@@ -52,6 +58,12 @@ pub fn cached_dom_commands(
     let decisions = decide::cached_decide_items(&content_batch.items, ai_analyzer, &active_rules)?;
     let decisions = decide::apply_stored_feedback(content_store, &content_batch.items, decisions);
     record_content_batch(content_store, &content_batch);
+    decide::record_decision_events(
+        content_store,
+        &content_batch.items,
+        &decisions,
+        "cachedDomAnalysis",
+    );
 
     Some(commands::commands_from_decisions(
         extracted_items,

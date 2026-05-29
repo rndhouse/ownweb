@@ -79,6 +79,32 @@ pub(super) fn apply_stored_feedback(
         .collect()
 }
 
+pub(super) fn record_decision_events(
+    content_store: &ContentStore,
+    items: &[ContentItem],
+    decisions: &[ContentDecision],
+    source: &str,
+) {
+    let items_by_client_id: HashMap<&str, &ContentItem> = items
+        .iter()
+        .map(|item| (item.client_id.as_str(), item))
+        .collect();
+
+    for decision in decisions {
+        let Some(item) = items_by_client_id.get(decision.client_id.as_str()) else {
+            continue;
+        };
+
+        if let Err(error) = content_store.record_x_decision_event(item, decision, source) {
+            warn!(
+                %error,
+                client_id = decision.client_id.as_str(),
+                "failed to store X decision event"
+            );
+        }
+    }
+}
+
 pub(super) fn stored_dislike_decision(
     content_store: &ContentStore,
     item: &ContentItem,

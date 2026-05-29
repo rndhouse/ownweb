@@ -28,6 +28,27 @@ pub(super) fn initialize(connection: &Connection) -> Result<()> {
     CREATE INDEX IF NOT EXISTS tweets_last_seen_at_idx
         ON tweets(last_seen_at_unix_ms);
 
+    CREATE TABLE IF NOT EXISTS content_decision_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        site TEXT NOT NULL,
+        storage_key TEXT NOT NULL,
+        post_id TEXT,
+        created_at_unix_ms INTEGER NOT NULL,
+        client_id TEXT NOT NULL,
+        action TEXT NOT NULL,
+        matched_rule_ids_json TEXT NOT NULL,
+        reason TEXT,
+        confidence REAL,
+        source TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS content_decision_events_storage_key_idx
+        ON content_decision_events(storage_key);
+    CREATE INDEX IF NOT EXISTS content_decision_events_post_id_idx
+        ON content_decision_events(post_id);
+    CREATE INDEX IF NOT EXISTS content_decision_events_created_at_idx
+        ON content_decision_events(created_at_unix_ms);
+
     CREATE TABLE IF NOT EXISTS tweet_feedback (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         storage_key TEXT NOT NULL,

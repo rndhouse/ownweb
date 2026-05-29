@@ -110,6 +110,18 @@ pub struct ContentStats {
     pub last_seen_at_unix_ms: Option<i64>,
 }
 
+/// Aggregated final-decision counts for one content rule.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RuleDecisionStats {
+    /// Stable rule ID.
+    pub rule_id: String,
+    /// Number of final decisions where this rule matched.
+    pub matched_count: usize,
+    /// Number of final hide decisions where this rule matched.
+    pub hide_count: usize,
+}
+
 /// Query options for listing or searching stored content.
 #[derive(Debug, Clone)]
 pub struct ContentQuery {
@@ -791,6 +803,29 @@ impl ContentStore {
             .lock()
             .expect("X storage mutex should not be poisoned");
         db.content_stats()
+    }
+
+    /// Stores one final X/Twitter content decision event when it is useful for rule stats.
+    pub fn record_x_decision_event(
+        &self,
+        item: &ContentItem,
+        decision: &crate::core::ContentDecision,
+        source: &str,
+    ) -> Result<bool> {
+        let mut db = self
+            .x_com
+            .lock()
+            .expect("X storage mutex should not be poisoned");
+        db.record_decision_event(item, decision, source)
+    }
+
+    /// Returns aggregate X/Twitter rule decision statistics.
+    pub fn x_rule_decision_stats(&self) -> Result<Vec<RuleDecisionStats>> {
+        let db = self
+            .x_com
+            .lock()
+            .expect("X storage mutex should not be poisoned");
+        db.rule_decision_stats()
     }
 
     /// Lists or searches stored X/Twitter content.
