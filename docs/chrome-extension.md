@@ -1,7 +1,7 @@
 # Chrome Extension
 
-The Chrome extension sends generic DOM region snapshots to the local WebLayer
-daemon and applies the daemon's returned DOM commands.
+The Chrome extension sends allowlisted site content snapshots to the local
+WebLayer daemon and applies the daemon's returned DOM commands.
 
 ## Load in Chrome
 
@@ -11,6 +11,14 @@ daemon and applies the daemon's returned DOM commands.
 4. Select the `google-chrome-extension` directory from the repository checkout.
 
 ## Daemon Contract
+
+The extension captures content only through explicit site adapters. Unknown
+hosts, unknown page surfaces, and unknown DOM structures send nothing. The
+current adapter supports X.com and Twitter URLs for home, explore, search, and
+status-thread pages, and it captures visible top-level
+`article[data-testid="tweet"]` post regions. Quoted posts and reply/thread
+context stay inside the captured post snapshot; nested quoted-post cards are
+not targeted as separate feedback regions.
 
 The extension opens a WebSocket to:
 
@@ -40,5 +48,6 @@ Content-Type: application/json
 Supported DOM command actions are `keep`, `hide`, `dim`, `insertLabel`,
 `insertFeedbackControl`, and `replaceText`.
 
-The extension does not make site-specific filtering decisions. The daemon
-interprets supported sites and decides what commands to return.
+The extension decides only which site content surfaces may be captured. It does
+not make filtering decisions. The daemon interprets captured content and
+decides what commands to return.

@@ -1,4 +1,3 @@
-const REGION_SELECTOR = "article, [role='article'], [role='listitem'], main section";
 const SCAN_DEBOUNCE_MS = 250;
 const MAX_REGIONS_PER_SCAN = 16;
 const MAX_TEXT_CHARS = 20000;
@@ -18,6 +17,7 @@ let nextGeneratedId = 1;
 let nextFeedbackSaveId = 1;
 let scanTimer = null;
 let requestInFlight = false;
+let activeCaptureContextKey = null;
 
 const elementIds = new WeakMap();
 const elementsByClientId = new Map();
@@ -62,8 +62,13 @@ function scheduleScan() {
 }
 
 function scanForRegions() {
-  for (const element of collectRegions()) {
-    const snapshot = snapshotElement(element);
+  const context = refreshCaptureContext();
+  if (!context) {
+    return;
+  }
+
+  for (const element of collectRegions(context)) {
+    const snapshot = snapshotElement(element, context);
     if (!snapshot) {
       continue;
     }
@@ -81,19 +86,20 @@ function scanForRegions() {
 
     element.dataset.weblayerSnapshotHash = snapshot.snapshotHash;
     element.dataset.weblayerState = "queued";
+    setSnapshotCaptureContextKey(snapshot, context.key);
     elementsByClientId.set(snapshot.clientId, element);
     snapshotsByClientId.set(snapshot.clientId, snapshot);
     queuedSnapshots.push(snapshot);
   }
 
-  flushQueue();
+  flushQueue(context);
 }
 
-function collectRegions() {
-  const candidates = Array.from(document.querySelectorAll(REGION_SELECTOR))
+function collectRegions(context) {
+  const candidates = context.collectCandidates()
+    .filter((candidate) => context.isSupportedElement(candidate))
     .filter(isVisibleRegion)
-    .filter(hasSnapshotContent)
-    .sort((left, right) => regionArea(left) - regionArea(right));
+    .filter(hasSnapshotContent);
   const selected = [];
 
   for (const candidate of candidates) {
@@ -107,17 +113,36 @@ function collectRegions() {
     }
   }
 
-  if (selected.length === 0) {
-    const fallback = document.querySelector("main") || document.body;
-    if (fallback && isVisibleRegion(fallback) && hasSnapshotContent(fallback)) {
-      selected.push(fallback);
-    }
-  }
-
   return selected.sort((left, right) => {
     const position = left.compareDocumentPosition(right);
     return position & Node.DOCUMENT_POSITION_PRECEDING ? 1 : -1;
   });
+}
+
+function refreshCaptureContext() {
+  const context = currentCaptureContext();
+  const nextKey = context ? context.key : null;
+  if (nextKey !== activeCaptureContextKey) {
+    clearCaptureState();
+    activeCaptureContextKey = nextKey;
+  }
+
+  return context;
+}
+
+function currentCaptureContext() {
+  const adapters = window.WebLayerSiteAdapters;
+  if (!adapters || typeof adapters.current !== "function") {
+    return null;
+  }
+
+  return adapters.current(window.location, document);
+}
+
+function clearCaptureState() {
+  queuedSnapshots.length = 0;
+  elementsByClientId.clear();
+  snapshotsByClientId.clear();
 }
 
 function isVisibleRegion(element) {
@@ -143,12 +168,11 @@ function hasSnapshotContent(element) {
   return text.length > 0 || clone.querySelector("a[href]") !== null;
 }
 
-function regionArea(element) {
-  const rect = element.getBoundingClientRect();
-  return rect.width * rect.height;
-}
+function snapshotElement(element, context = refreshCaptureContext()) {
+  if (!context || !context.isSupportedElement(element)) {
+    return null;
+  }
 
-function snapshotElement(element) {
   const clone = cloneForSnapshot(element);
   const text = truncate(normalizeText(clone.innerText || clone.textContent || ""), MAX_TEXT_CHARS);
   const links = snapshotLinks(clone);
@@ -182,6 +206,17 @@ function snapshotElement(element) {
     snapshotHash,
     capturedAt: new Date().toISOString()
   };
+}
+
+function setSnapshotCaptureContextKey(snapshot, key) {
+  Object.defineProperty(snapshot, "captureContextKey", {
+    value: key,
+    enumerable: false
+  });
+}
+
+function snapshotForMessage(snapshot) {
+  return { ...snapshot };
 }
 
 function cloneForSnapshot(element) {
@@ -236,13 +271,28 @@ function pageSnapshot() {
   };
 }
 
-async function flushQueue() {
+async function flushQueue(context = refreshCaptureContext()) {
+  if (!context) {
+    queuedSnapshots.length = 0;
+    return;
+  }
+
   if (requestInFlight || queuedSnapshots.length === 0) {
     return;
   }
 
   requestInFlight = true;
-  const batch = queuedSnapshots.splice(0, MAX_REGIONS_PER_SCAN);
+  const batch = queuedSnapshots
+    .splice(0, MAX_REGIONS_PER_SCAN)
+    .filter((snapshot) => snapshot.captureContextKey === context.key);
+
+  if (batch.length === 0) {
+    requestInFlight = false;
+    if (queuedSnapshots.length > 0) {
+      setTimeout(flushQueue, 100);
+    }
+    return;
+  }
 
   try {
     for (const snapshot of batch) {
@@ -255,7 +305,7 @@ async function flushQueue() {
     const response = await sendMessage({
       type: "weblayer:analyzeDom",
       page: pageSnapshot(),
-      elements: batch
+      elements: batch.map(snapshotForMessage)
     });
 
     if (!response || !response.ok) {
@@ -442,7 +492,7 @@ async function sendFeedbackEvent(element, feedback, reason, button) {
     feedback,
     reason,
     page: pageSnapshot(),
-    element: snapshot,
+    element: snapshotForMessage(snapshot),
     feedbackContextId
   };
 

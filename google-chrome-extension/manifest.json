@@ -16,10 +16,12 @@
   "content_scripts": [
     {
       "matches": [
-        "http://*/*",
-        "https://*/*"
+        "*://x.com/*",
+        "*://www.x.com/*",
+        "*://twitter.com/*",
+        "*://www.twitter.com/*"
       ],
-      "js": ["contentScript.js"],
+      "js": ["siteAdapters.js", "contentScript.js"],
       "css": ["content.css"],
       "run_at": "document_idle"
     }

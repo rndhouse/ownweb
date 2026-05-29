@@ -1,6 +1,6 @@
 # WebLayer
 
-Chrome Manifest V3 extension that sends generic DOM region snapshots to a
+Chrome Manifest V3 extension that sends allowlisted site content snapshots to a
 local WebLayer daemon and applies the daemon's returned DOM commands.
 
 ## Load in Chrome
@@ -11,6 +11,14 @@ local WebLayer daemon and applies the daemon's returned DOM commands.
 4. Select this `google-chrome-extension` directory.
 
 ## Daemon contract
+
+The extension captures content only through explicit site adapters. Unknown
+hosts, unknown page surfaces, and unknown DOM structures send nothing. The
+current adapter supports X.com and Twitter URLs for home, explore, search, and
+status-thread pages, and it captures visible top-level
+`article[data-testid="tweet"]` post regions. Quoted posts and reply/thread
+context stay inside the captured post snapshot; nested quoted-post cards are
+not targeted as separate feedback regions.
 
 The extension opens a WebSocket to:
 
@@ -103,9 +111,9 @@ WebSocket command event shape:
 ```
 
 Supported actions are `keep`, `hide`, `dim`, `insertLabel`,
-`insertFeedbackControl`, and `replaceText`. The extension does not make
-site-specific filtering decisions; the daemon interprets supported sites and
-decides what commands to return.
+`insertFeedbackControl`, and `replaceText`. The extension decides only which
+site content surfaces may be captured. It does not make filtering decisions;
+the daemon interprets captured content and decides what commands to return.
 
 Feedback request shape:
 
