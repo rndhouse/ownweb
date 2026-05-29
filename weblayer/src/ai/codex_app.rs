@@ -17,13 +17,19 @@ use tokio_tungstenite::{connect_async, tungstenite::Message, MaybeTlsStream, Web
 use tracing::warn;
 
 const DEFAULT_WS_URL: &str = "ws://127.0.0.1:39177";
-const DEFAULT_MODEL: &str = "gpt-5.3-codex-spark";
-const DEFAULT_EFFORT: &str = "low";
-const DEFAULT_TIMEOUT_MS: u64 = 8000;
+const DEFAULT_OPINION_MODEL: &str = "gpt-5.4-mini";
+const DEFAULT_OPINION_EFFORT: &str = "low";
+const DEFAULT_OPINION_TIMEOUT_MS: u64 = 8000;
+const DEFAULT_RULE_PROPOSAL_MODEL: &str = "gpt-5.4-mini";
+const DEFAULT_RULE_PROPOSAL_EFFORT: &str = "medium";
+const DEFAULT_RULE_PROPOSAL_TIMEOUT_MS: u64 = 120000;
 const WS_ENV: &str = "WEBLAYER_CODEX_APP_WS";
-const MODEL_ENV: &str = "WEBLAYER_CODEX_MODEL";
-const EFFORT_ENV: &str = "WEBLAYER_CODEX_EFFORT";
-const TIMEOUT_ENV: &str = "WEBLAYER_CODEX_TIMEOUT_MS";
+const OPINION_MODEL_ENV: &str = "WEBLAYER_CODEX_OPINION_MODEL";
+const OPINION_EFFORT_ENV: &str = "WEBLAYER_CODEX_OPINION_EFFORT";
+const OPINION_TIMEOUT_ENV: &str = "WEBLAYER_CODEX_OPINION_TIMEOUT_MS";
+const RULE_PROPOSAL_MODEL_ENV: &str = "WEBLAYER_CODEX_RULE_PROPOSAL_MODEL";
+const RULE_PROPOSAL_EFFORT_ENV: &str = "WEBLAYER_CODEX_RULE_PROPOSAL_EFFORT";
+const RULE_PROPOSAL_TIMEOUT_ENV: &str = "WEBLAYER_CODEX_RULE_PROPOSAL_TIMEOUT_MS";
 const CWD_ENV: &str = "WEBLAYER_CODEX_CWD";
 
 /// Codex app-server analyzer backed by one local app-server process.
@@ -55,7 +61,7 @@ impl CodexAppAnalyzer {
         let prompt_rules = prompt_rules(rules);
 
         match timeout(
-            self.config.request_timeout,
+            self.config.opinion.request_timeout,
             self.run_x_opinion_turn(prompt_items, prompt_rules),
         )
         .await
@@ -83,7 +89,7 @@ impl CodexAppAnalyzer {
         let prompt_rules = prompt_rule_set_rules(active_rules, rule_stats);
 
         match timeout(
-            self.config.request_timeout,
+            self.config.rule_proposal.request_timeout,
             self.run_x_rule_set_proposal_turn(prompt_feedback, prompt_rules),
         )
         .await
@@ -107,7 +113,9 @@ impl CodexAppAnalyzer {
     ) -> Result<Vec<AiOpinion>, CodexAppError> {
         let prompt = build_prompt(&prompt_items, &prompt_rules)?;
         let schema = output_schema();
-        let final_text = self.run_turn(prompt, schema).await?;
+        let final_text = self
+            .run_turn(CodexWorkflow::Opinion, prompt, schema)
+            .await?;
 
         parse_opinions(&final_text)
     }
@@ -119,12 +127,20 @@ impl CodexAppAnalyzer {
     ) -> Result<Vec<RuleSetProposalChange>, CodexAppError> {
         let prompt = build_rule_set_proposal_prompt(&feedback, &active_rules)?;
         let schema = rule_set_proposal_output_schema();
-        let final_text = self.run_turn(prompt, schema).await?;
+        let final_text = self
+            .run_turn(CodexWorkflow::RuleProposal, prompt, schema)
+            .await?;
 
         parse_rule_set_proposal(&final_text)
     }
 
-    async fn run_turn(&self, prompt: String, schema: Value) -> Result<String, CodexAppError> {
+    async fn run_turn(
+        &self,
+        workflow: CodexWorkflow,
+        prompt: String,
+        schema: Value,
+    ) -> Result<String, CodexAppError> {
+        let turn_config = self.config.turn_config(workflow).clone();
         let mut state = self.state.lock().await;
         self.check_child_status(&mut state).await?;
         self.ensure_session_started(&mut state).await?;
@@ -138,7 +154,7 @@ impl CodexAppAnalyzer {
             .as_mut()
             .ok_or_else(|| CodexAppError::Protocol("missing Codex app-server session".into()))?;
         let result = session
-            .start_turn(&self.config, &thread_id, prompt, schema)
+            .start_turn(&turn_config, &thread_id, prompt, schema)
             .await;
 
         if result.is_err() {
@@ -238,21 +254,52 @@ impl CodexAppAnalyzer {
 #[derive(Debug)]
 struct CodexAppConfig {
     ws_url: String,
+    opinion: CodexTurnConfig,
+    rule_proposal: CodexTurnConfig,
+    cwd: String,
+}
+
+#[derive(Debug, Clone)]
+struct CodexTurnConfig {
     model: String,
     effort: String,
     request_timeout: Duration,
-    cwd: String,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum CodexWorkflow {
+    Opinion,
+    RuleProposal,
 }
 
 impl CodexAppConfig {
     fn from_env() -> Self {
-        let ws_url = env_var(WS_ENV).unwrap_or_else(|| DEFAULT_WS_URL.into());
-        let model = env_var(MODEL_ENV).unwrap_or_else(|| DEFAULT_MODEL.into());
-        let effort = env_var(EFFORT_ENV).unwrap_or_else(|| DEFAULT_EFFORT.into());
-        let timeout_ms = env_var(TIMEOUT_ENV)
-            .and_then(|value| value.parse().ok())
-            .unwrap_or(DEFAULT_TIMEOUT_MS);
-        let cwd = env_var(CWD_ENV).unwrap_or_else(|| {
+        Self::from_env_vars(env_var)
+    }
+
+    fn from_env_vars(mut read_env: impl FnMut(&str) -> Option<String>) -> Self {
+        let ws_url = read_env(WS_ENV).unwrap_or_else(|| DEFAULT_WS_URL.into());
+        let opinion = CodexTurnConfig {
+            model: read_env(OPINION_MODEL_ENV).unwrap_or_else(|| DEFAULT_OPINION_MODEL.into()),
+            effort: read_env(OPINION_EFFORT_ENV).unwrap_or_else(|| DEFAULT_OPINION_EFFORT.into()),
+            request_timeout: Duration::from_millis(
+                read_env(OPINION_TIMEOUT_ENV)
+                    .and_then(|value| value.parse().ok())
+                    .unwrap_or(DEFAULT_OPINION_TIMEOUT_MS),
+            ),
+        };
+        let rule_proposal = CodexTurnConfig {
+            model: read_env(RULE_PROPOSAL_MODEL_ENV)
+                .unwrap_or_else(|| DEFAULT_RULE_PROPOSAL_MODEL.into()),
+            effort: read_env(RULE_PROPOSAL_EFFORT_ENV)
+                .unwrap_or_else(|| DEFAULT_RULE_PROPOSAL_EFFORT.into()),
+            request_timeout: Duration::from_millis(
+                read_env(RULE_PROPOSAL_TIMEOUT_ENV)
+                    .and_then(|value| value.parse().ok())
+                    .unwrap_or(DEFAULT_RULE_PROPOSAL_TIMEOUT_MS),
+            ),
+        };
+        let cwd = read_env(CWD_ENV).unwrap_or_else(|| {
             Path::new(env!("CARGO_MANIFEST_DIR"))
                 .parent()
                 .unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")))
@@ -262,10 +309,20 @@ impl CodexAppConfig {
 
         Self {
             ws_url,
-            model,
-            effort,
-            request_timeout: Duration::from_millis(timeout_ms),
+            opinion,
+            rule_proposal,
             cwd,
+        }
+    }
+
+    fn thread_model(&self) -> &str {
+        &self.opinion.model
+    }
+
+    fn turn_config(&self, workflow: CodexWorkflow) -> &CodexTurnConfig {
+        match workflow {
+            CodexWorkflow::Opinion => &self.opinion,
+            CodexWorkflow::RuleProposal => &self.rule_proposal,
         }
     }
 }
@@ -320,7 +377,7 @@ impl CodexAppSession {
                     "runtimeWorkspaceRoots": [self.cwd],
                     "approvalPolicy": "never",
                     "sandbox": "read-only",
-                    "model": config.model,
+                    "model": config.thread_model(),
                     "serviceTier": null,
                     "baseInstructions": "You support WebLayer by evaluating X/Twitter content and curating user-defined filtering rules. Return only the requested JSON.",
                     "developerInstructions": "Return concise valid JSON matching the provided schema. Do not use tools. Do not run commands. Follow the task instructions exactly.",
@@ -342,7 +399,7 @@ impl CodexAppSession {
 
     async fn start_turn(
         &mut self,
-        config: &CodexAppConfig,
+        config: &CodexTurnConfig,
         thread_id: &str,
         prompt: String,
         schema: Value,
@@ -855,6 +912,44 @@ impl From<serde_json::Error> for CodexAppError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn config_uses_workflow_specific_defaults() {
+        let config = CodexAppConfig::from_env_vars(|_| None);
+
+        assert_eq!(config.opinion.model, "gpt-5.4-mini");
+        assert_eq!(config.opinion.effort, "low");
+        assert_eq!(config.opinion.request_timeout, Duration::from_millis(8000));
+        assert_eq!(config.rule_proposal.model, "gpt-5.4-mini");
+        assert_eq!(config.rule_proposal.effort, "medium");
+        assert_eq!(
+            config.rule_proposal.request_timeout,
+            Duration::from_millis(120000)
+        );
+    }
+
+    #[test]
+    fn config_reads_workflow_specific_env_vars() {
+        let config = CodexAppConfig::from_env_vars(|name| match name {
+            OPINION_MODEL_ENV => Some("opinion-model".into()),
+            OPINION_EFFORT_ENV => Some("minimal".into()),
+            OPINION_TIMEOUT_ENV => Some("1234".into()),
+            RULE_PROPOSAL_MODEL_ENV => Some("rule-model".into()),
+            RULE_PROPOSAL_EFFORT_ENV => Some("high".into()),
+            RULE_PROPOSAL_TIMEOUT_ENV => Some("5678".into()),
+            _ => None,
+        });
+
+        assert_eq!(config.opinion.model, "opinion-model");
+        assert_eq!(config.opinion.effort, "minimal");
+        assert_eq!(config.opinion.request_timeout, Duration::from_millis(1234));
+        assert_eq!(config.rule_proposal.model, "rule-model");
+        assert_eq!(config.rule_proposal.effort, "high");
+        assert_eq!(
+            config.rule_proposal.request_timeout,
+            Duration::from_millis(5678)
+        );
+    }
 
     #[test]
     fn prompt_includes_active_rules() {

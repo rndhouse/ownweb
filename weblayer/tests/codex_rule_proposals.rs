@@ -151,8 +151,13 @@ impl TestDaemon {
                 format!("ws://127.0.0.1:{codex_ws_port}"),
             )
             .env(
-                "WEBLAYER_CODEX_TIMEOUT_MS",
-                env::var("WEBLAYER_CODEX_TIMEOUT_MS").unwrap_or_else(|_| "60000".into()),
+                "WEBLAYER_CODEX_OPINION_TIMEOUT_MS",
+                env::var("WEBLAYER_CODEX_OPINION_TIMEOUT_MS").unwrap_or_else(|_| "60000".into()),
+            )
+            .env(
+                "WEBLAYER_CODEX_RULE_PROPOSAL_TIMEOUT_MS",
+                env::var("WEBLAYER_CODEX_RULE_PROPOSAL_TIMEOUT_MS")
+                    .unwrap_or_else(|_| "120000".into()),
             )
             .stdout(Stdio::null())
             .stderr(Stdio::null())

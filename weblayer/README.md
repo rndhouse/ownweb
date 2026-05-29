@@ -109,6 +109,10 @@ requests, and asks it to evaluate captured X/Twitter posts against active
 content rules. Every captured X post with text or a URL is sent to Codex so the
 daemon can evaluate it against the active rule set.
 
+Post opinions and rule proposal generation have separate Codex model, reasoning
+effort, and timeout settings. Post opinions default to `gpt-5.4-mini` with
+`low` effort. Rule proposals default to `gpt-5.4-mini` with `medium` effort.
+
 Opinions are cached in memory by X status ID, a normalized fallback key, and the
 active rule set. This lets the timeline view and single-post view reuse the same
 AI decision when they capture the same post content under the same policy.
@@ -148,9 +152,12 @@ Useful environment variables:
 WEBLAYER_DAEMON_ORIGIN=http://127.0.0.1:17891
 WEBLAYER_CODEX_APP_ENABLED=0
 WEBLAYER_CODEX_APP_WS=ws://127.0.0.1:39177
-WEBLAYER_CODEX_MODEL=gpt-5.3-codex-spark
-WEBLAYER_CODEX_EFFORT=low
-WEBLAYER_CODEX_TIMEOUT_MS=8000
+WEBLAYER_CODEX_OPINION_MODEL=gpt-5.4-mini
+WEBLAYER_CODEX_OPINION_EFFORT=low
+WEBLAYER_CODEX_OPINION_TIMEOUT_MS=8000
+WEBLAYER_CODEX_RULE_PROPOSAL_MODEL=gpt-5.4-mini
+WEBLAYER_CODEX_RULE_PROPOSAL_EFFORT=medium
+WEBLAYER_CODEX_RULE_PROPOSAL_TIMEOUT_MS=120000
 WEBLAYER_CODEX_CWD=/path/to/project
 WEBLAYER_DATA_DIR=/home/user/.local/share/weblayer
 WEBLAYER_LOG_CAPTURED_CONTENT=0
