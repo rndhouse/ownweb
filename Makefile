@@ -8,12 +8,13 @@ SHARED_JS := \
 	$(EXTENSION_DIR)/shared/options.js \
 	$(EXTENSION_DIR)/shared/siteAdapters.js
 
-.PHONY: all build check clean docs extension extension-chrome extension-firefox firefox-lint help test
+.PHONY: all build check clean daemon docs extension extension-chrome extension-firefox firefox-lint help test
 
 help:
 	@echo "make all               Build the Rust binary, docs site, and browser extensions"
 	@echo "make build             Build the WebLayer Rust binary"
 	@echo "make check             Run Rust, extension, manifest, and docs checks"
+	@echo "make daemon            Run the WebLayer daemon"
 	@echo "make test              Run Rust tests"
 	@echo "make docs              Build the MkDocs site"
 	@echo "make extension         Build Chrome and Firefox extension directories"
@@ -32,6 +33,9 @@ check:
 	for file in $(SHARED_JS); do node --check "$$file"; done
 	node -e "for (const file of ['$(EXTENSION_DIR)/chrome/manifest.json','$(EXTENSION_DIR)/firefox/manifest.json']) { JSON.parse(require('fs').readFileSync(file, 'utf8')); console.log(file + ' ok'); }"
 	$(MKDOCS) build --strict
+
+daemon:
+	cargo run --manifest-path $(CARGO_MANIFEST) -- daemon
 
 test:
 	cargo test --manifest-path $(CARGO_MANIFEST)
