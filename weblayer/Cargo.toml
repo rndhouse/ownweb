@@ -2,6 +2,20 @@
 name = "weblayer"
 version = "0.1.0"
 edition = "2021"
+description = "Local web filtering daemon and CLI for user-controlled browsing rules."
+readme = "README.md"
+repository = "https://github.com/rndhouse/weblayer"
+homepage = "https://rndhouse.github.io/weblayer/"
+documentation = "https://rndhouse.github.io/weblayer/"
+keywords = ["browser", "cli", "daemon", "filtering", "rules"]
+categories = ["command-line-utilities"]
+include = [
+    "Cargo.lock",
+    "Cargo.toml",
+    "README.md",
+    "RULES.md",
+    "src/**",
+]
 
 [dependencies]
 axum = { version = "0.8", features = ["ws"] }
