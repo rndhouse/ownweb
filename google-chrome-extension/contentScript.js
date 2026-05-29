@@ -404,7 +404,7 @@ async function toggleFeedback(element, button) {
 
   try {
     if (persisted) {
-      const response = await sendFeedbackEvent(element, "undoThumbsDown", reason);
+      const response = await sendFeedbackEvent(element, "undoThumbsDown", reason, button);
 
       if (!response || !response.ok) {
         throw new Error(response && response.error ? response.error : "Daemon request failed.");
@@ -431,19 +431,24 @@ async function toggleFeedback(element, button) {
   }
 }
 
-async function sendFeedbackEvent(element, feedback, reason) {
+async function sendFeedbackEvent(element, feedback, reason, button) {
   const snapshot = snapshotElement(element);
   if (!snapshot) {
     return null;
   }
-
-  return sendMessage({
+  const feedbackContext = currentFeedbackContext(element, snapshot.clientId, button);
+  const message = {
     type: "weblayer:feedback",
     feedback,
     reason,
     page: pageSnapshot(),
     element: snapshot
-  });
+  };
+  if (feedbackContext) {
+    message.feedbackContext = feedbackContext;
+  }
+
+  return sendMessage(message);
 }
 
 function setFeedbackButtonActive(button, active) {
@@ -669,7 +674,7 @@ async function sendReasonUpdate(element, button, panel, reason) {
   setFeedbackSaveStatus(panel, "Saving...", "saving");
 
   try {
-    const response = await sendFeedbackEvent(element, feedback, reason);
+    const response = await sendFeedbackEvent(element, feedback, reason, button);
     if (!response || !response.ok) {
       throw new Error(response && response.error ? response.error : "Daemon request failed.");
     }
@@ -851,6 +856,7 @@ function insertFeedbackControl(element, command) {
   );
   if (existingButton) {
     existingButton.classList.toggle("weblayer-feedback-button--subject", isSubjectPost);
+    storeFeedbackContext(existingButton, command.feedbackContext);
     if (!existingButton.hasAttribute("aria-pressed")) {
       existingButton.setAttribute("aria-pressed", "false");
     }
@@ -865,7 +871,14 @@ function insertFeedbackControl(element, command) {
   const likeSlot = findActionSlot(actionBar, "[data-testid='like'], [data-testid='unlike']");
   const slot = createFeedbackSlot(likeSlot || actionBar.firstElementChild);
   slot.dataset.weblayerUi = "true";
-  slot.append(createFeedbackButton(clientId, command.label || "Hide this post", isSubjectPost));
+  slot.append(
+    createFeedbackButton(
+      clientId,
+      command.label || "Hide this post",
+      isSubjectPost,
+      command.feedbackContext
+    )
+  );
 
   if (likeSlot && likeSlot.parentElement === actionBar && likeSlot.nextSibling) {
     actionBar.insertBefore(slot, likeSlot.nextSibling);
@@ -889,7 +902,7 @@ function createFeedbackSlot(referenceSlot) {
   return slot;
 }
 
-function createFeedbackButton(clientId, label, isSubjectPost) {
+function createFeedbackButton(clientId, label, isSubjectPost, feedbackContext) {
   const button = document.createElement("button");
   button.type = "button";
   button.className = "weblayer-feedback-button";
@@ -901,8 +914,34 @@ function createFeedbackButton(clientId, label, isSubjectPost) {
   button.title = label;
   button.setAttribute("aria-label", label);
   button.setAttribute("aria-pressed", "false");
+  storeFeedbackContext(button, feedbackContext);
   button.append(createThumbsDownIcon());
   return button;
+}
+
+function storeFeedbackContext(button, feedbackContext) {
+  if (feedbackContext && typeof feedbackContext === "object" && !Array.isArray(feedbackContext)) {
+    button.dataset.weblayerFeedbackContext = JSON.stringify(feedbackContext);
+  }
+}
+
+function currentFeedbackContext(element, clientId, button) {
+  const source = button || element.querySelector(
+    `.weblayer-feedback-button[data-weblayer-client-id="${cssEscape(clientId)}"]`
+  );
+  if (!source || !source.dataset.weblayerFeedbackContext) {
+    return null;
+  }
+
+  try {
+    const feedbackContext = JSON.parse(source.dataset.weblayerFeedbackContext);
+    return feedbackContext && typeof feedbackContext === "object" && !Array.isArray(feedbackContext)
+      ? feedbackContext
+      : null;
+  } catch (_error) {
+    delete source.dataset.weblayerFeedbackContext;
+    return null;
+  }
 }
 
 function isSubjectPostElement(element, clientId) {

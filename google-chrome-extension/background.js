@@ -122,12 +122,18 @@ async function sendFeedback(message) {
   const reason = stringOrEmpty(message.reason);
   const page = normalizePage(message.page);
   const element = normalizeElement(message.element);
-  const response = await postJson(settings.daemonOrigin, FEEDBACK_PATH, {
+  const body = {
     feedback,
     reason,
     page,
     element
-  });
+  };
+  const feedbackContext = objectOrNull(message.feedbackContext);
+  if (feedbackContext) {
+    body.feedbackContext = feedbackContext;
+  }
+
+  const response = await postJson(settings.daemonOrigin, FEEDBACK_PATH, body);
 
   if (!Array.isArray(response.commands)) {
     throw new Error("Daemon response must include a commands array.");
@@ -335,8 +341,16 @@ function normalizeCommand(command) {
     label: stringOrNull(command.label),
     text: stringOrNull(command.text),
     reason: stringOrNull(command.reason),
-    confidence: Number.isFinite(command.confidence) ? command.confidence : null
+    confidence: Number.isFinite(command.confidence) ? command.confidence : null,
+    feedbackContext: objectOrNull(command.feedbackContext),
+    matchedRuleIds: Array.isArray(command.matchedRuleIds)
+      ? command.matchedRuleIds.map(stringOrEmpty).filter(Boolean)
+      : []
   };
+}
+
+function objectOrNull(value) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value : null;
 }
 
 function normalizeFeedback(value) {

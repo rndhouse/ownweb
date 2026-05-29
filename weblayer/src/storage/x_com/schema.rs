@@ -39,7 +39,8 @@ pub(super) fn initialize(connection: &Connection) -> Result<()> {
         url TEXT,
         author_handle TEXT,
         captured_at TEXT,
-        payload_json TEXT NOT NULL
+        payload_json TEXT NOT NULL,
+        rule_context_json TEXT
     );
 
     CREATE INDEX IF NOT EXISTS tweet_feedback_storage_key_idx
@@ -61,7 +62,8 @@ pub(super) fn initialize(connection: &Connection) -> Result<()> {
         url TEXT,
         author_handle TEXT,
         latest_captured_at TEXT,
-        latest_payload_json TEXT NOT NULL
+        latest_payload_json TEXT NOT NULL,
+        latest_rule_context_json TEXT
     );
 
     CREATE INDEX IF NOT EXISTS tweet_feedback_state_active_idx
@@ -122,8 +124,43 @@ pub(super) fn initialize(connection: &Connection) -> Result<()> {
         ON content_annotations(updated_at_unix_ms);
     ",
     )?;
+    migrate_feedback_context(connection)?;
     migrate_search(connection)?;
     rules::seed_default_rules(connection)?;
+
+    Ok(())
+}
+
+fn migrate_feedback_context(connection: &Connection) -> Result<()> {
+    ensure_column(
+        connection,
+        "tweet_feedback",
+        "rule_context_json",
+        "ALTER TABLE tweet_feedback ADD COLUMN rule_context_json TEXT",
+    )?;
+    ensure_column(
+        connection,
+        "tweet_feedback_state",
+        "latest_rule_context_json",
+        "ALTER TABLE tweet_feedback_state ADD COLUMN latest_rule_context_json TEXT",
+    )?;
+
+    Ok(())
+}
+
+fn ensure_column(
+    connection: &Connection,
+    table: &str,
+    column: &str,
+    alter_sql: &str,
+) -> Result<()> {
+    let mut statement = connection.prepare(&format!("PRAGMA table_info({table})"))?;
+    let columns = statement
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    if !columns.iter().any(|existing| existing == column) {
+        connection.execute(alter_sql, [])?;
+    }
 
     Ok(())
 }

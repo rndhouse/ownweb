@@ -1,6 +1,6 @@
 use crate::{
     ai::{AiAction, AiAnalyzer, AiContentRule, AiOpinion},
-    core::{ContentDecision, ContentItem, FeedbackKind},
+    core::{ContentDecision, ContentItem, FeedbackContext, FeedbackKind},
     storage::{ContentStore, RuleQuery},
 };
 use std::collections::HashMap;
@@ -11,9 +11,12 @@ pub(super) fn record_feedback(
     items: &[ContentItem],
     feedback: FeedbackKind,
     reason: &str,
+    feedback_context: Option<&FeedbackContext>,
 ) {
     for item in items {
-        if let Err(error) = content_store.record_x_feedback(item, feedback, reason) {
+        if let Err(error) =
+            content_store.record_x_feedback_with_context(item, feedback, reason, feedback_context)
+        {
             warn!(
                 %error,
                 client_id = item.client_id.as_str(),
@@ -162,7 +165,8 @@ pub(super) fn reviewed_item_decision(opinion: AiOpinion) -> ContentDecision {
             "WebLayer: hidden by rule",
             opinion.opinion,
             opinion.confidence,
-        ),
+        )
+        .with_matched_rule_ids(opinion.matched_rule_ids),
     }
 }
 

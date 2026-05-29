@@ -94,7 +94,20 @@ WebSocket command event shape:
       "label": "Hide this post",
       "text": null,
       "reason": "User feedback control",
-      "confidence": null
+      "confidence": null,
+      "feedbackContext": {
+        "activeRules": [
+          {
+            "id": "x-engagement-bait-reaction",
+            "priority": 50,
+            "title": "Engagement bait reaction posts",
+            "instruction": "Downrank engagement bait reaction posts.",
+            "updatedAtUnixMs": 1760000000000,
+            "positiveExamples": [],
+            "negativeExamples": []
+          }
+        ]
+      }
     }
   ]
 }
@@ -133,6 +146,19 @@ Feedback request shape:
     ],
     "snapshotHash": "abc123",
     "capturedAt": "2026-05-21T10:00:00.000Z"
+  },
+  "feedbackContext": {
+    "activeRules": [
+      {
+        "id": "x-engagement-bait-reaction",
+        "priority": 50,
+        "title": "Engagement bait reaction posts",
+        "instruction": "Downrank engagement bait reaction posts.",
+        "updatedAtUnixMs": 1760000000000,
+        "positiveExamples": [],
+        "negativeExamples": []
+      }
+    ]
   }
 }
 ```

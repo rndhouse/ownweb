@@ -1,6 +1,6 @@
 mod x_com;
 
-use crate::core::{AnalysisBatch, ContentItem, FeedbackKind};
+use crate::core::{AnalysisBatch, ContentItem, FeedbackContext, FeedbackKind};
 use serde::Serialize;
 use serde_json::Value;
 use std::{
@@ -88,6 +88,8 @@ pub struct XDislikedPost {
     pub seen_count: Option<i64>,
     /// Latest client-side capture timestamp.
     pub latest_captured_at: Option<String>,
+    /// Rule context captured with the latest feedback event when available.
+    pub rule_context: Option<FeedbackContext>,
 }
 
 /// Aggregate counts for content stored under one site scope.
@@ -529,18 +531,19 @@ impl ContentStore {
         db.record_batch(batch)
     }
 
-    /// Stores user feedback for one X/Twitter content item.
-    pub fn record_x_feedback(
+    /// Stores user feedback with feedback-time rule context.
+    pub fn record_x_feedback_with_context(
         &self,
         item: &ContentItem,
         feedback: FeedbackKind,
         reason: &str,
+        feedback_context: Option<&FeedbackContext>,
     ) -> Result<bool> {
         let mut db = self
             .x_com
             .lock()
             .expect("X storage mutex should not be poisoned");
-        db.record_feedback(item, feedback, reason)
+        db.record_feedback_with_context(item, feedback, reason, feedback_context)
     }
 
     /// Returns the current feedback state for one X/Twitter content item.

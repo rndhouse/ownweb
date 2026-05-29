@@ -1,6 +1,9 @@
 use super::AppState;
 use crate::{
-    core::{DomAnalysisBatch, DomCommand, DomElementSnapshot, FeedbackKind, PageSnapshot},
+    core::{
+        DomAnalysisBatch, DomCommand, DomElementSnapshot, FeedbackContext, FeedbackKind,
+        PageSnapshot,
+    },
     sites,
 };
 use axum::{extract::State, Json};
@@ -30,6 +33,7 @@ pub(super) async fn dom_feedback(
         page,
         element,
         reason,
+        feedback_context,
     } = request;
     let batch = DomAnalysisBatch {
         page,
@@ -40,7 +44,13 @@ pub(super) async fn dom_feedback(
     }
 
     Json(DomFeedbackResponse {
-        commands: sites::apply_feedback(&batch, feedback, reason.as_str(), &state.content_store),
+        commands: sites::apply_feedback(
+            &batch,
+            feedback,
+            reason.as_str(),
+            feedback_context,
+            &state.content_store,
+        ),
     })
 }
 
@@ -96,6 +106,9 @@ pub struct DomFeedbackRequest {
     pub page: PageSnapshot,
     /// DOM region that received feedback.
     pub element: DomElementSnapshot,
+    /// Rule context emitted by the daemon when the feedback control was rendered.
+    #[serde(default)]
+    pub feedback_context: Option<FeedbackContext>,
 }
 
 /// Response for a DOM feedback request.

@@ -451,6 +451,7 @@ struct PromptItem {
 #[serde(rename_all = "camelCase")]
 struct PromptRule {
     id: String,
+    priority: i64,
     title: String,
     instruction: String,
     positive_examples: Vec<String>,
@@ -504,6 +505,7 @@ fn prompt_rules(rules: &[AiContentRule]) -> Vec<PromptRule> {
         .iter()
         .map(|rule| PromptRule {
             id: rule.id.clone(),
+            priority: rule.priority,
             title: rule.title.clone(),
             instruction: rule.instruction.clone(),
             positive_examples: rule.positive_examples.clone(),
@@ -630,6 +632,7 @@ mod tests {
         }];
         let rules = vec![PromptRule {
             id: "x-engagement-bait-reaction".into(),
+            priority: 50,
             title: "Engagement bait reaction posts".into(),
             instruction: "Downrank engagement bait reaction posts.".into(),
             positive_examples: vec!["lol this clip is ridiculous".into()],

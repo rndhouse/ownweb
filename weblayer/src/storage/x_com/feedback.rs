@@ -3,7 +3,7 @@ use super::{
     clean_optional, normalize_text, now_unix_ms, sqlite_limit, stable_post_id, storage_key, Store,
 };
 use crate::{
-    core::{ContentItem, FeedbackKind},
+    core::{ContentItem, FeedbackContext, FeedbackKind},
     storage::{XDislikePage, XDislikeQuery, XDislikedPost},
 };
 use rusqlite::{params, OptionalExtension};
@@ -11,15 +11,21 @@ use serde::Serialize;
 use tracing::debug;
 
 impl Store {
-    pub(in crate::storage) fn record_feedback(
+    pub(in crate::storage) fn record_feedback_with_context(
         &mut self,
         item: &ContentItem,
         feedback: FeedbackKind,
         reason: &str,
+        feedback_context: Option<&FeedbackContext>,
     ) -> Result<bool> {
         let created_at_unix_ms = now_unix_ms();
-        let Some(record) =
-            StoredTweetFeedback::from_item(item, feedback, reason, created_at_unix_ms)?
+        let Some(record) = StoredTweetFeedback::from_item(
+            item,
+            feedback,
+            reason,
+            created_at_unix_ms,
+            feedback_context,
+        )?
         else {
             debug!(
                 target: "weblayer_daemon::storage::x_com",
@@ -42,8 +48,9 @@ impl Store {
                 url,
                 author_handle,
                 captured_at,
-                payload_json
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+                payload_json,
+                rule_context_json
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
             ",
             params![
                 record.storage_key,
@@ -56,6 +63,7 @@ impl Store {
                 record.author_handle,
                 record.captured_at,
                 record.payload_json,
+                record.rule_context_json,
             ],
         )?;
 
@@ -73,8 +81,9 @@ impl Store {
                 url,
                 author_handle,
                 latest_captured_at,
-                latest_payload_json
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6, ?7, ?8, ?9, ?10, ?11)
+                latest_payload_json,
+                latest_rule_context_json
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
             ON CONFLICT(storage_key) DO UPDATE SET
                 post_id = COALESCE(excluded.post_id, tweet_feedback_state.post_id),
                 active = excluded.active,
@@ -85,7 +94,8 @@ impl Store {
                 url = COALESCE(excluded.url, tweet_feedback_state.url),
                 author_handle = COALESCE(excluded.author_handle, tweet_feedback_state.author_handle),
                 latest_captured_at = excluded.latest_captured_at,
-                latest_payload_json = excluded.latest_payload_json
+                latest_payload_json = excluded.latest_payload_json,
+                latest_rule_context_json = excluded.latest_rule_context_json
             ",
             params![
                 record.storage_key,
@@ -99,6 +109,7 @@ impl Store {
                 record.author_handle,
                 record.captured_at,
                 record.payload_json,
+                record.rule_context_json,
             ],
         )?;
         transaction.commit()?;
@@ -177,7 +188,8 @@ impl Store {
                 tweets.first_seen_at_unix_ms,
                 tweets.last_seen_at_unix_ms,
                 tweets.seen_count,
-                COALESCE(state.latest_captured_at, tweets.latest_captured_at) AS latest_captured_at
+                COALESCE(state.latest_captured_at, tweets.latest_captured_at) AS latest_captured_at,
+                state.latest_rule_context_json
             FROM tweet_feedback_state state
             LEFT JOIN tweets ON tweets.storage_key = state.storage_key
             WHERE (?1 IS NULL OR state.active = ?1)
@@ -203,6 +215,7 @@ impl Store {
                     last_seen_at_unix_ms: row.get(11)?,
                     seen_count: row.get(12)?,
                     latest_captured_at: row.get(13)?,
+                    rule_context: feedback_context_from_row(row, 14)?,
                 })
             })?
             .collect::<std::result::Result<Vec<_>, _>>()?;
@@ -227,6 +240,7 @@ struct StoredTweetFeedback {
     author_handle: Option<String>,
     captured_at: Option<String>,
     payload_json: String,
+    rule_context_json: Option<String>,
 }
 
 impl StoredTweetFeedback {
@@ -235,6 +249,7 @@ impl StoredTweetFeedback {
         feedback: FeedbackKind,
         reason: &str,
         created_at_unix_ms: i64,
+        feedback_context: Option<&FeedbackContext>,
     ) -> Result<Option<Self>> {
         let post_id = stable_post_id(item);
         let normalized_text = normalize_text(&item.text);
@@ -248,7 +263,9 @@ impl StoredTweetFeedback {
             reason: reason.as_str(),
             created_at_unix_ms,
             item,
+            rule_context: feedback_context,
         })?;
+        let rule_context_json = feedback_context.map(serde_json::to_string).transpose()?;
 
         Ok(Some(Self {
             storage_key,
@@ -261,6 +278,7 @@ impl StoredTweetFeedback {
             author_handle: clean_optional(item.author.as_deref()),
             captured_at: item.captured_at.clone(),
             payload_json,
+            rule_context_json,
         }))
     }
 }
@@ -272,6 +290,25 @@ struct StoredTweetFeedbackPayload<'a> {
     reason: &'a str,
     created_at_unix_ms: i64,
     item: &'a ContentItem,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    rule_context: Option<&'a FeedbackContext>,
+}
+
+fn feedback_context_from_row(
+    row: &rusqlite::Row<'_>,
+    index: usize,
+) -> rusqlite::Result<Option<FeedbackContext>> {
+    let json: Option<String> = row.get(index)?;
+    json.map(|json| {
+        serde_json::from_str(&json).map_err(|error| {
+            rusqlite::Error::FromSqlConversionFailure(
+                index,
+                rusqlite::types::Type::Text,
+                Box::new(error),
+            )
+        })
+    })
+    .transpose()
 }
 
 fn feedback_kind_name(feedback: FeedbackKind) -> &'static str {

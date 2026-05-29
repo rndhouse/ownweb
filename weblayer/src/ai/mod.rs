@@ -176,10 +176,14 @@ fn env_flag_default(name: &str, default: bool) -> bool {
 pub struct AiContentRule {
     /// Stable rule ID.
     pub id: String,
+    /// Rule priority. Lower numbers run earlier.
+    pub priority: i64,
     /// Short human-readable rule name.
     pub title: String,
     /// Agent-facing instruction text.
     pub instruction: String,
+    /// Rule update timestamp.
+    pub updated_at_unix_ms: i64,
     /// Examples that should match this rule.
     pub positive_examples: Vec<String>,
     /// Examples that should not match this rule.
@@ -190,8 +194,10 @@ impl From<ContentRule> for AiContentRule {
     fn from(rule: ContentRule) -> Self {
         Self {
             id: rule.id,
+            priority: rule.priority,
             title: rule.title,
             instruction: rule.instruction,
+            updated_at_unix_ms: rule.updated_at_unix_ms,
             positive_examples: rule.examples.positive,
             negative_examples: rule.examples.negative,
         }
@@ -230,6 +236,8 @@ fn rule_cache_scope(rules: &[AiContentRule]) -> String {
     let mut text = String::new();
     for rule in rules {
         text.push_str(&rule.id);
+        text.push('\n');
+        text.push_str(&rule.priority.to_string());
         text.push('\n');
         text.push_str(&rule.title);
         text.push('\n');

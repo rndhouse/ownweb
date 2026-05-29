@@ -161,16 +161,19 @@ identified posts, then receives `final` commands after local analysis finishes.
 `/v1/dom/analyze` is the REST smoke-test path. It accepts the same DOM snapshot
 shape and returns final DOM commands in one response. `/v1/dom/feedback`
 records `thumbsDown`, `undoThumbsDown`, and `updateReason` signals for one DOM
-region. Site-scoped inspection endpoints keep the path generic and take the
-site scope through the `site` query parameter. `/v1/content` lists recent stored
-content or searches it with SQLite FTS5 when `q` is provided. `/v1/content/stats`
-returns unique stored content rows and total captured encounters for the
-selected site. `/v1/feedback` lists stored user feedback signals, such as active
-thumbs-down feedback for X posts. `/v1/content/annotations` lets agents attach
-tags, notes, topics, or other JSON metadata to stored content without changing
-the original captured content. `/v1/rules` manages site-scoped filtering rules.
-New rules default to `draft`; only `active` rules are sent to the AI analyzer.
-Rule status values are `draft`, `active`, `disabled`, and `archived`.
+region. Feedback controls include a `feedbackContext` snapshot of the active
+rule set; the extension echoes it back so feedback can be tied to the rules
+that were in play. Site-scoped inspection endpoints keep the path generic and
+take the site scope through the `site` query parameter. `/v1/content` lists
+recent stored content or searches it with SQLite FTS5 when `q` is provided.
+`/v1/content/stats` returns unique stored content rows and total captured
+encounters for the selected site. `/v1/feedback` lists stored user feedback
+signals, such as active thumbs-down feedback for X posts.
+`/v1/content/annotations` lets agents attach tags, notes, topics, or other JSON
+metadata to stored content without changing the original captured content.
+`/v1/rules` manages site-scoped filtering rules. New rules default to `draft`;
+only `active` rules are sent to the AI analyzer. Rule status values are
+`draft`, `active`, `disabled`, and `archived`.
 
 Rule create request shape:
 
@@ -271,11 +274,15 @@ DOM analysis response shape:
       "label": "Summary: Post summary",
       "text": null,
       "reason": "Codex app-server summary",
-      "confidence": 0.8
+      "confidence": 0.8,
+      "matchedRuleIds": []
     }
   ]
 }
 ```
+
+`insertFeedbackControl` commands may also include `feedbackContext`, with
+active rule snapshots and item-specific decision metadata for later feedback.
 
 WebSocket request shape:
 

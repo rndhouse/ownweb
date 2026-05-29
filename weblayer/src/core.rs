@@ -162,6 +162,18 @@ pub enum DecisionAction {
     Replace,
 }
 
+impl DecisionAction {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Keep => "keep",
+            Self::Hide => "hide",
+            Self::Dim => "dim",
+            Self::Label => "label",
+            Self::Replace => "replace",
+        }
+    }
+}
+
 /// Daemon output for one content item.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -178,6 +190,9 @@ pub struct ContentDecision {
     pub replacement_text: Option<String>,
     /// Classifier confidence on a `0.0..=1.0` scale when known.
     pub confidence: Option<f32>,
+    /// Active rule IDs that contributed to this decision.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub matched_rule_ids: Vec<String>,
 }
 
 impl ContentDecision {
@@ -190,6 +205,7 @@ impl ContentDecision {
             reason: None,
             replacement_text: None,
             confidence: Some(1.0),
+            matched_rule_ids: Vec::new(),
         }
     }
 
@@ -207,7 +223,75 @@ impl ContentDecision {
             reason: Some(reason.into()),
             replacement_text: None,
             confidence: Some(confidence),
+            matched_rule_ids: Vec::new(),
         }
+    }
+
+    /// Adds rule IDs that contributed to this decision.
+    pub fn with_matched_rule_ids(mut self, matched_rule_ids: Vec<String>) -> Self {
+        self.matched_rule_ids = matched_rule_ids;
+        self
+    }
+}
+
+/// Feedback-time context used later for rule curation.
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct FeedbackContext {
+    /// Active rules available to the decision agent when feedback controls were rendered.
+    #[serde(default)]
+    pub active_rules: Vec<FeedbackRuleContext>,
+    /// Decision metadata for this item when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decision: Option<FeedbackDecisionContext>,
+}
+
+/// Snapshot of one active rule in the feedback-time rule set.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct FeedbackRuleContext {
+    /// Stable rule ID.
+    pub id: String,
+    /// Rule priority at the time of feedback.
+    pub priority: i64,
+    /// Short human-readable title.
+    pub title: String,
+    /// Agent-facing instruction text.
+    pub instruction: String,
+    /// Rule update timestamp at the time of feedback.
+    pub updated_at_unix_ms: i64,
+    /// Positive examples attached to the rule.
+    #[serde(default)]
+    pub positive_examples: Vec<String>,
+    /// Negative examples attached to the rule.
+    #[serde(default)]
+    pub negative_examples: Vec<String>,
+}
+
+/// Decision metadata available when the feedback control was rendered.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct FeedbackDecisionContext {
+    /// Browser-side decision action.
+    pub action: String,
+    /// Decision explanation when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    /// Active rule IDs matched by the decision.
+    #[serde(default)]
+    pub matched_rule_ids: Vec<String>,
+}
+
+impl FeedbackContext {
+    /// Returns a copy of this context with item-specific decision metadata attached.
+    pub fn with_decision(&self, decision: &ContentDecision) -> Self {
+        let mut context = self.clone();
+        context.decision = Some(FeedbackDecisionContext {
+            action: decision.action.as_str().into(),
+            reason: decision.reason.clone(),
+            matched_rule_ids: decision.matched_rule_ids.clone(),
+        });
+        context
     }
 }
 
@@ -227,6 +311,12 @@ pub struct DomCommand {
     pub reason: Option<String>,
     /// Classifier confidence on a `0.0..=1.0` scale when known.
     pub confidence: Option<f32>,
+    /// Rule and decision context to echo when the user provides feedback.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub feedback_context: Option<FeedbackContext>,
+    /// Active rule IDs that contributed to this command.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub matched_rule_ids: Vec<String>,
 }
 
 impl DomCommand {
@@ -247,6 +337,8 @@ impl DomCommand {
             text: decision.replacement_text,
             reason: decision.reason,
             confidence: decision.confidence,
+            feedback_context: None,
+            matched_rule_ids: decision.matched_rule_ids,
         }
     }
 
@@ -259,7 +351,19 @@ impl DomCommand {
             text: None,
             reason: Some("User feedback control".into()),
             confidence: None,
+            feedback_context: None,
+            matched_rule_ids: Vec::new(),
         }
+    }
+
+    /// Builds a feedback control that carries rule context for future feedback.
+    pub fn feedback_control_with_context(
+        target: DomCommandTarget,
+        feedback_context: FeedbackContext,
+    ) -> Self {
+        let mut command = Self::feedback_control(target);
+        command.feedback_context = Some(feedback_context);
+        command
     }
 }
 

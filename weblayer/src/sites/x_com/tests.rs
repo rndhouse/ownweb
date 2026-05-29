@@ -276,6 +276,10 @@ fn rule_match_opinions_hide_posts() {
         Some("Matches low-value reaction rule")
     );
     assert_eq!(decision.confidence, Some(0.91));
+    assert_eq!(
+        decision.matched_rule_ids,
+        vec!["x-engagement-bait-reaction".to_string()]
+    );
 }
 
 #[test]
@@ -324,6 +328,7 @@ fn thumbs_down_feedback_records_state_without_hiding_immediately() {
         &batch,
         FeedbackKind::ThumbsDown,
         "low quality",
+        None,
         &content_store,
     );
     let pending_commands = pending_dom_commands(&batch, &ai_analyzer, &content_store);
