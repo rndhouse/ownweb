@@ -1,6 +1,9 @@
 CARGO_MANIFEST := weblayer/Cargo.toml
 EXTENSION_DIR := browser-extension
-MKDOCS ?= mkdocs
+DOCS_VENV ?= .venv-docs
+MKDOCS ?= $(DOCS_VENV)/bin/mkdocs
+PYTHON ?= python3
+DOCS_BOOTSTRAP := $(if $(filter $(DOCS_VENV)/bin/mkdocs,$(MKDOCS)),$(MKDOCS))
 
 SHARED_JS := \
 	$(EXTENSION_DIR)/shared/background.js \
@@ -28,7 +31,7 @@ all: build docs extension
 build:
 	cargo build --manifest-path $(CARGO_MANIFEST)
 
-check:
+check: $(DOCS_BOOTSTRAP)
 	cargo check --manifest-path $(CARGO_MANIFEST)
 	for file in $(SHARED_JS); do node --check "$$file"; done
 	node -e "for (const file of ['$(EXTENSION_DIR)/chrome/manifest.json','$(EXTENSION_DIR)/firefox/manifest.json']) { JSON.parse(require('fs').readFileSync(file, 'utf8')); console.log(file + ' ok'); }"
@@ -40,8 +43,13 @@ daemon:
 test:
 	cargo test --manifest-path $(CARGO_MANIFEST)
 
-docs:
+docs: $(DOCS_BOOTSTRAP)
 	$(MKDOCS) build --strict
+
+$(DOCS_VENV)/bin/mkdocs: requirements-docs.txt
+	$(PYTHON) -m venv $(DOCS_VENV)
+	$(DOCS_VENV)/bin/python -m pip install --upgrade pip
+	$(DOCS_VENV)/bin/python -m pip install -r requirements-docs.txt
 
 extension:
 	$(MAKE) -C $(EXTENSION_DIR) all

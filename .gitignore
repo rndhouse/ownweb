@@ -1,5 +1,6 @@
 target/
 captured-posts.jsonl
 AGENTS.md
+.venv-docs/
 site/
 browser-extension/dist/
