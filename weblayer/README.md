@@ -117,6 +117,29 @@ Cache hits and X posts sent to the Codex app-server are logged at debug level
 on stdout. Repeated full captured post payloads from DOM extraction are logged
 at trace level.
 
+## Codex E2E Tests
+
+Codex-backed rule proposal tests are ignored by default because they start the
+daemon, call the local Codex app-server, and write review artifacts. Run the
+small curated fixture test with:
+
+```sh
+WEBLAYER_RUN_CODEX_E2E=1 \
+  cargo test --test codex_rule_proposals \
+  codex_rule_proposal_from_curated_feedback -- --ignored --nocapture
+```
+
+To run against a temporary copy of local WebLayer data:
+
+```sh
+WEBLAYER_RUN_CODEX_E2E=1 WEBLAYER_E2E_USE_LOCAL_DATA=1 \
+  cargo test --test codex_rule_proposals \
+  codex_rule_proposal_from_local_data_copy -- --ignored --nocapture
+```
+
+Both tests use temporary databases and do not apply proposals. Artifacts are
+written to `target/codex-e2e/` unless `WEBLAYER_E2E_ARTIFACT_DIR` is set.
+
 ## Configuration
 
 Useful environment variables:
