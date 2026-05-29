@@ -307,9 +307,191 @@ pub struct ContentRule {
 #[serde(rename_all = "camelCase")]
 pub struct RuleExamples {
     /// Examples that should match this rule.
+    #[serde(default)]
     pub positive: Vec<String>,
     /// Examples that should not match this rule.
+    #[serde(default)]
     pub negative: Vec<String>,
+}
+
+impl Default for RuleExamples {
+    fn default() -> Self {
+        Self {
+            positive: Vec::new(),
+            negative: Vec::new(),
+        }
+    }
+}
+
+/// Input for creating one content rule.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuleCreateInput {
+    /// Optional stable rule ID. When absent, storage derives one from the rule.
+    pub id: Option<String>,
+    /// Rule lifecycle status. Defaults to `draft`.
+    pub status: Option<String>,
+    /// Rule priority. Lower numbers run earlier.
+    pub priority: Option<i64>,
+    /// Short human-readable rule name.
+    pub title: String,
+    /// Agent-facing instruction text.
+    pub instruction: String,
+    /// Source that created this rule, such as `user` or `generated`.
+    pub created_source: String,
+    /// Positive and negative examples for the rule.
+    pub examples: RuleExamples,
+}
+
+/// Input for updating one content rule.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuleUpdateInput {
+    /// Stable rule ID to update.
+    pub id: String,
+    /// Optional replacement lifecycle status.
+    pub status: Option<String>,
+    /// Optional replacement priority.
+    pub priority: Option<i64>,
+    /// Optional replacement title.
+    pub title: Option<String>,
+    /// Optional replacement instruction.
+    pub instruction: Option<String>,
+    /// Source making this update.
+    pub source: String,
+    /// Optional replacement positive examples.
+    pub positive_examples: Option<Vec<String>>,
+    /// Optional replacement negative examples.
+    pub negative_examples: Option<Vec<String>>,
+}
+
+/// Input for changing a rule lifecycle status.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuleStatusInput {
+    /// Stable rule ID to update.
+    pub id: String,
+    /// New lifecycle status, such as `active`, `disabled`, or `archived`.
+    pub status: String,
+    /// Source making this status change.
+    pub source: String,
+}
+
+/// Query options for testing one rule against stored content.
+#[derive(Debug, Clone)]
+pub struct RuleValidationQuery {
+    /// Maximum number of matching rows to return.
+    pub limit: usize,
+    /// Number of matching rows to skip.
+    pub offset: usize,
+}
+
+/// Detailed rule view with recent audit events.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct RuleDetail {
+    /// Stored rule.
+    pub rule: ContentRule,
+    /// Recent audit events for this rule.
+    pub audit: Vec<RuleAuditEvent>,
+}
+
+/// Append-only audit event for one content rule.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct RuleAuditEvent {
+    /// Database row ID for this event.
+    pub id: i64,
+    /// Stable rule ID.
+    pub rule_id: String,
+    /// Event kind, such as `created`, `updated`, or `enabled`.
+    pub event_kind: String,
+    /// Source that caused the event.
+    pub source: String,
+    /// Event creation timestamp.
+    pub created_at_unix_ms: i64,
+    /// Snapshot of the rule after the event.
+    pub snapshot: Value,
+}
+
+/// Page of stored posts that likely match one rule.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RuleValidationPage {
+    /// Rule being tested.
+    pub rule: ContentRule,
+    /// Number of stored content rows considered.
+    pub total_stored: usize,
+    /// Number of likely matching rows before pagination.
+    pub total_matching: usize,
+    /// Maximum number of rows requested.
+    pub limit: usize,
+    /// Number of matching rows skipped.
+    pub offset: usize,
+    /// Matching stored posts.
+    pub items: Vec<RuleValidationMatch>,
+}
+
+/// One stored post that likely matches a rule.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RuleValidationMatch {
+    /// Stored content row.
+    pub content: StoredContentItem,
+    /// Heuristic score used to sort matches.
+    pub score: usize,
+    /// Rule terms found in the content text.
+    pub matched_terms: Vec<String>,
+    /// Positive examples found in the content text.
+    pub matched_examples: Vec<String>,
+}
+
+/// Query options for deriving draft rule suggestions from feedback.
+#[derive(Debug, Clone)]
+pub struct RuleSuggestionQuery {
+    /// Minimum active feedback examples required for one suggestion.
+    pub min_feedback: usize,
+    /// Maximum number of suggestions to return.
+    pub limit: usize,
+    /// Number of suggestions to skip.
+    pub offset: usize,
+}
+
+/// Page of draft rule suggestions derived from user feedback.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RuleSuggestionPage {
+    /// Number of matching suggestions before pagination.
+    pub total_matching: usize,
+    /// Maximum number of suggestions requested.
+    pub limit: usize,
+    /// Number of suggestions skipped.
+    pub offset: usize,
+    /// Candidate rules.
+    pub items: Vec<RuleSuggestion>,
+}
+
+/// Draft rule candidate derived from active feedback.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RuleSuggestion {
+    /// Proposed stable rule ID.
+    pub id: String,
+    /// Proposed rule lifecycle status.
+    pub status: String,
+    /// Proposed priority.
+    pub priority: i64,
+    /// Proposed title.
+    pub title: String,
+    /// Proposed instruction.
+    pub instruction: String,
+    /// Proposed source.
+    pub source: String,
+    /// Number of active feedback records supporting this suggestion.
+    pub feedback_count: usize,
+    /// Feedback reasons that produced this suggestion.
+    pub reasons: Vec<String>,
+    /// Proposed examples.
+    pub examples: RuleExamples,
+    /// Feedback rows used as evidence.
+    pub evidence: Vec<XDislikedPost>,
 }
 
 impl ContentStore {
@@ -386,6 +568,64 @@ impl ContentStore {
             .lock()
             .expect("X storage mutex should not be poisoned");
         db.rules(query)
+    }
+
+    /// Loads one X/Twitter content rule with recent audit events.
+    pub fn x_rule_detail(&self, id: &str) -> Result<Option<RuleDetail>> {
+        let db = self
+            .x_com
+            .lock()
+            .expect("X storage mutex should not be poisoned");
+        db.rule_detail(id)
+    }
+
+    /// Creates one X/Twitter content rule.
+    pub fn x_create_rule(&self, input: RuleCreateInput) -> Result<ContentRule> {
+        let mut db = self
+            .x_com
+            .lock()
+            .expect("X storage mutex should not be poisoned");
+        db.create_rule(input)
+    }
+
+    /// Updates one X/Twitter content rule.
+    pub fn x_update_rule(&self, input: RuleUpdateInput) -> Result<Option<ContentRule>> {
+        let mut db = self
+            .x_com
+            .lock()
+            .expect("X storage mutex should not be poisoned");
+        db.update_rule(input)
+    }
+
+    /// Changes one X/Twitter content rule status.
+    pub fn x_update_rule_status(&self, input: RuleStatusInput) -> Result<Option<ContentRule>> {
+        let mut db = self
+            .x_com
+            .lock()
+            .expect("X storage mutex should not be poisoned");
+        db.update_rule_status(input)
+    }
+
+    /// Tests one X/Twitter rule against stored content.
+    pub fn x_validate_rule(
+        &self,
+        id: &str,
+        query: RuleValidationQuery,
+    ) -> Result<Option<RuleValidationPage>> {
+        let db = self
+            .x_com
+            .lock()
+            .expect("X storage mutex should not be poisoned");
+        db.validate_rule(id, query)
+    }
+
+    /// Suggests draft X/Twitter rules from active feedback.
+    pub fn x_rule_suggestions(&self, query: RuleSuggestionQuery) -> Result<RuleSuggestionPage> {
+        let db = self
+            .x_com
+            .lock()
+            .expect("X storage mutex should not be poisoned");
+        db.rule_suggestions(query)
     }
 
     /// Returns aggregate counts for stored X/Twitter content.
@@ -504,6 +744,8 @@ pub enum StorageError {
     Sqlite(rusqlite::Error),
     /// Payload JSON serialization failed.
     Json(serde_json::Error),
+    /// Caller supplied invalid storage input.
+    InvalidInput(String),
 }
 
 impl fmt::Display for StorageError {
@@ -516,6 +758,7 @@ impl fmt::Display for StorageError {
             Self::Io(error) => write!(formatter, "filesystem error: {error}"),
             Self::Sqlite(error) => write!(formatter, "sqlite error: {error}"),
             Self::Json(error) => write!(formatter, "json error: {error}"),
+            Self::InvalidInput(message) => formatter.write_str(message),
         }
     }
 }

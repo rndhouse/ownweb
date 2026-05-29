@@ -4,13 +4,14 @@ use crate::{
     sites,
     storage::{
         ContentAnnotation, ContentAnnotationInput, ContentAnnotationQuery, ContentQuery,
-        ContentRule, ContentStats, ContentStore, RuleQuery, StorageError, XDislikeQuery,
-        XDislikedPost,
+        ContentRule, ContentStats, ContentStore, RuleAuditEvent, RuleCreateInput, RuleExamples,
+        RuleQuery, RuleStatusInput, RuleSuggestion, RuleSuggestionQuery, RuleUpdateInput,
+        RuleValidationMatch, StorageError, XDislikeQuery, XDislikedPost,
     },
 };
 use axum::{
     extract::ws::{Message, WebSocket, WebSocketUpgrade},
-    extract::{Query, State},
+    extract::{Path as AxumPath, Query, State},
     http::{header, Method, StatusCode},
     response::{IntoResponse, Response},
     routing::{get, post},
@@ -55,7 +56,11 @@ pub fn router() -> Result<Router, StorageError> {
         .route("/v1/content/stats", get(content_stats))
         .route("/v1/feedback", get(feedback))
         .route("/v1/dislikes", get(feedback))
-        .route("/v1/rules", get(rules))
+        .route("/v1/rule-suggestions", get(rule_suggestions))
+        .route("/v1/rules", get(rules).post(create_rule))
+        .route("/v1/rules/{rule_id}", get(rule_detail).post(update_rule))
+        .route("/v1/rules/{rule_id}/status", post(update_rule_status))
+        .route("/v1/rules/{rule_id}/validate", get(validate_rule))
         .with_state(state)
         .layer(cors_layer()))
 }
@@ -278,6 +283,37 @@ async fn upsert_content_annotation(
     }))
 }
 
+async fn rule_suggestions(
+    State(state): State<AppState>,
+    Query(query): Query<RuleSuggestionsQuery>,
+) -> Result<Json<RuleSuggestionsResponse>, ApiError> {
+    let site = SiteScope::from_param(query.site.as_deref())?;
+    let limit = query
+        .limit
+        .unwrap_or(DEFAULT_RULE_LIMIT)
+        .min(MAX_RULE_LIMIT);
+    let offset = query.offset.unwrap_or(0);
+    let min_feedback = query.min_feedback.unwrap_or(1).max(1);
+    let page = match site {
+        SiteScope::XCom => state
+            .content_store
+            .x_rule_suggestions(RuleSuggestionQuery {
+                min_feedback,
+                limit,
+                offset,
+            })?,
+    };
+
+    Ok(Json(RuleSuggestionsResponse {
+        site: site.as_str(),
+        min_feedback,
+        total_matching: page.total_matching,
+        limit: page.limit,
+        offset: page.offset,
+        items: page.items,
+    }))
+}
+
 async fn rules(
     State(state): State<AppState>,
     Query(query): Query<RulesQuery>,
@@ -303,6 +339,135 @@ async fn rules(
     Ok(Json(RulesResponse {
         site: site.as_str(),
         status,
+        total_matching: page.total_matching,
+        limit: page.limit,
+        offset: page.offset,
+        items: page.items,
+    }))
+}
+
+async fn rule_detail(
+    State(state): State<AppState>,
+    AxumPath(rule_id): AxumPath<String>,
+    Query(query): Query<RuleSiteQuery>,
+) -> Result<Json<RuleDetailResponse>, ApiError> {
+    let site = SiteScope::from_param(query.site.as_deref())?;
+    let detail = match site {
+        SiteScope::XCom => state.content_store.x_rule_detail(&rule_id)?,
+    }
+    .ok_or_else(|| ApiError::not_found(format!("rule not found: {rule_id}")))?;
+
+    Ok(Json(RuleDetailResponse {
+        site: site.as_str(),
+        rule: detail.rule,
+        audit: detail.audit,
+    }))
+}
+
+async fn create_rule(
+    State(state): State<AppState>,
+    Query(query): Query<RuleSiteQuery>,
+    Json(request): Json<CreateRuleRequest>,
+) -> Result<Json<RuleMutationResponse>, ApiError> {
+    let site = SiteScope::from_param(query.site.as_deref())?;
+    let title = required_text(request.title, "title")?;
+    let instruction = required_text(request.instruction, "instruction")?;
+    let created_source = clean_query_value(request.source).unwrap_or_else(|| "user".into());
+    let examples = clean_rule_examples(request.examples);
+
+    let rule = match site {
+        SiteScope::XCom => state.content_store.x_create_rule(RuleCreateInput {
+            id: clean_query_value(request.id),
+            status: clean_query_value(request.status),
+            priority: request.priority,
+            title,
+            instruction,
+            created_source,
+            examples,
+        })?,
+    };
+
+    Ok(Json(RuleMutationResponse {
+        site: site.as_str(),
+        rule,
+    }))
+}
+
+async fn update_rule(
+    State(state): State<AppState>,
+    AxumPath(rule_id): AxumPath<String>,
+    Query(query): Query<RuleSiteQuery>,
+    Json(request): Json<UpdateRuleRequest>,
+) -> Result<Json<RuleMutationResponse>, ApiError> {
+    let site = SiteScope::from_param(query.site.as_deref())?;
+    let examples = request.examples.unwrap_or_default();
+    let rule = match site {
+        SiteScope::XCom => state.content_store.x_update_rule(RuleUpdateInput {
+            id: rule_id.clone(),
+            status: clean_query_value(request.status),
+            priority: request.priority,
+            title: clean_query_value(request.title),
+            instruction: clean_query_value(request.instruction),
+            source: clean_query_value(request.source).unwrap_or_else(|| "user".into()),
+            positive_examples: examples.positive,
+            negative_examples: examples.negative,
+        })?,
+    }
+    .ok_or_else(|| ApiError::not_found(format!("rule not found: {rule_id}")))?;
+
+    Ok(Json(RuleMutationResponse {
+        site: site.as_str(),
+        rule,
+    }))
+}
+
+async fn update_rule_status(
+    State(state): State<AppState>,
+    AxumPath(rule_id): AxumPath<String>,
+    Query(query): Query<RuleSiteQuery>,
+    Json(request): Json<UpdateRuleStatusRequest>,
+) -> Result<Json<RuleMutationResponse>, ApiError> {
+    let site = SiteScope::from_param(query.site.as_deref())?;
+    let status = required_text(request.status, "status")?;
+    let source = clean_query_value(request.source).unwrap_or_else(|| "user".into());
+    let rule = match site {
+        SiteScope::XCom => state.content_store.x_update_rule_status(RuleStatusInput {
+            id: rule_id.clone(),
+            status,
+            source,
+        })?,
+    }
+    .ok_or_else(|| ApiError::not_found(format!("rule not found: {rule_id}")))?;
+
+    Ok(Json(RuleMutationResponse {
+        site: site.as_str(),
+        rule,
+    }))
+}
+
+async fn validate_rule(
+    State(state): State<AppState>,
+    AxumPath(rule_id): AxumPath<String>,
+    Query(query): Query<RuleValidationApiQuery>,
+) -> Result<Json<RuleValidationResponse>, ApiError> {
+    let site = SiteScope::from_param(query.site.as_deref())?;
+    let limit = query
+        .limit
+        .unwrap_or(DEFAULT_CONTENT_LIMIT)
+        .min(MAX_CONTENT_LIMIT);
+    let offset = query.offset.unwrap_or(0);
+    let page = match site {
+        SiteScope::XCom => state.content_store.x_validate_rule(
+            &rule_id,
+            crate::storage::RuleValidationQuery { limit, offset },
+        )?,
+    }
+    .ok_or_else(|| ApiError::not_found(format!("rule not found: {rule_id}")))?;
+
+    Ok(Json(RuleValidationResponse {
+        site: site.as_str(),
+        rule: page.rule,
+        total_stored: page.total_stored,
         total_matching: page.total_matching,
         limit: page.limit,
         offset: page.offset,
@@ -653,6 +818,37 @@ struct RulesQuery {
     offset: Option<usize>,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RuleSuggestionsQuery {
+    /// Site scope for the request, such as `x.com`.
+    site: Option<String>,
+    /// Minimum active feedback examples required for a suggestion.
+    min_feedback: Option<usize>,
+    /// Maximum number of suggestions to return. Defaults to 100 and is capped at 500.
+    limit: Option<usize>,
+    /// Number of suggestions to skip.
+    offset: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RuleSiteQuery {
+    /// Site scope for the request, such as `x.com`.
+    site: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RuleValidationApiQuery {
+    /// Site scope for the request, such as `x.com`.
+    site: Option<String>,
+    /// Maximum number of likely matches to return. Defaults to 100 and is capped at 500.
+    limit: Option<usize>,
+    /// Number of matching rows to skip.
+    offset: Option<usize>,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct RulesResponse {
@@ -662,6 +858,99 @@ struct RulesResponse {
     limit: usize,
     offset: usize,
     items: Vec<ContentRule>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RuleSuggestionsResponse {
+    site: &'static str,
+    min_feedback: usize,
+    total_matching: usize,
+    limit: usize,
+    offset: usize,
+    items: Vec<RuleSuggestion>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CreateRuleRequest {
+    /// Optional stable rule ID.
+    id: Option<String>,
+    /// Optional lifecycle status. Defaults to `draft`.
+    status: Option<String>,
+    /// Optional priority. Lower numbers run earlier.
+    priority: Option<i64>,
+    /// Short human-readable title.
+    title: String,
+    /// Agent-facing instruction text.
+    instruction: String,
+    /// Source that created the rule. Defaults to `user`.
+    source: Option<String>,
+    /// Positive and negative examples.
+    #[serde(default)]
+    examples: RuleExamples,
+}
+
+#[derive(Debug, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct RuleExamplesPatch {
+    /// Replacement positive examples when present.
+    positive: Option<Vec<String>>,
+    /// Replacement negative examples when present.
+    negative: Option<Vec<String>>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UpdateRuleRequest {
+    /// Optional replacement lifecycle status.
+    status: Option<String>,
+    /// Optional replacement priority.
+    priority: Option<i64>,
+    /// Optional replacement title.
+    title: Option<String>,
+    /// Optional replacement instruction text.
+    instruction: Option<String>,
+    /// Source that updated the rule. Defaults to `user`.
+    source: Option<String>,
+    /// Optional examples patch. Present arrays replace only that example side.
+    examples: Option<RuleExamplesPatch>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UpdateRuleStatusRequest {
+    /// New lifecycle status.
+    status: String,
+    /// Source that changed the status. Defaults to `user`.
+    source: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RuleDetailResponse {
+    site: &'static str,
+    rule: ContentRule,
+    audit: Vec<RuleAuditEvent>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RuleMutationResponse {
+    site: &'static str,
+    rule: ContentRule,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RuleValidationResponse {
+    site: &'static str,
+    rule: ContentRule,
+    total_stored: usize,
+    total_matching: usize,
+    limit: usize,
+    offset: usize,
+    items: Vec<RuleValidationMatch>,
 }
 
 #[derive(Debug)]
@@ -677,13 +966,26 @@ impl ApiError {
             message: message.into(),
         }
     }
+
+    fn not_found(message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::NOT_FOUND,
+            message: message.into(),
+        }
+    }
 }
 
 impl From<StorageError> for ApiError {
     fn from(error: StorageError) -> Self {
-        Self {
-            status: StatusCode::INTERNAL_SERVER_ERROR,
-            message: error.to_string(),
+        match error {
+            StorageError::InvalidInput(message) => Self {
+                status: StatusCode::BAD_REQUEST,
+                message,
+            },
+            error => Self {
+                status: StatusCode::INTERNAL_SERVER_ERROR,
+                message: error.to_string(),
+            },
         }
     }
 }
@@ -748,6 +1050,21 @@ fn clean_query_value(value: Option<String>) -> Option<String> {
     value
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
+}
+
+fn clean_rule_examples(examples: RuleExamples) -> RuleExamples {
+    RuleExamples {
+        positive: clean_rule_example_list(examples.positive),
+        negative: clean_rule_example_list(examples.negative),
+    }
+}
+
+fn clean_rule_example_list(examples: Vec<String>) -> Vec<String> {
+    examples
+        .into_iter()
+        .map(|example| example.trim().to_string())
+        .filter(|example| !example.is_empty())
+        .collect()
 }
 
 fn required_text(value: String, field: &str) -> Result<String, ApiError> {

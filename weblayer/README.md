@@ -76,6 +76,17 @@ subcommand behaves like `weblayer status`.
 ```sh
 cargo run -- status
 cargo run -- rules list --site x.com
+cargo run -- rules show x-engagement-bait-reaction --site x.com
+cargo run -- rules create \
+  --site x.com \
+  --id x-ai-slop \
+  --title "AI slop" \
+  --instruction "Hide generic AI engagement bait." \
+  --positive-example "I asked ChatGPT to write this viral thread"
+cargo run -- rules validate x-engagement-bait-reaction --site x.com
+cargo run -- rules suggest --site x.com --min-feedback 2
+cargo run -- rules enable x-ai-slop --site x.com
+cargo run -- rules disable x-ai-slop --site x.com
 cargo run -- content list --site x.com --limit 20
 cargo run -- content search --site x.com codex
 cargo run -- content stats --site x.com
@@ -122,7 +133,13 @@ RUST_LOG=debug
 - `POST /v1/content/annotations?site=x.com`
 - `GET /v1/content/stats?site=x.com`
 - `GET /v1/feedback?site=x.com`
+- `GET /v1/rule-suggestions?site=x.com`
 - `GET /v1/rules?site=x.com`
+- `POST /v1/rules?site=x.com`
+- `GET /v1/rules/{id}?site=x.com`
+- `POST /v1/rules/{id}?site=x.com`
+- `POST /v1/rules/{id}/status?site=x.com`
+- `GET /v1/rules/{id}/validate?site=x.com`
 
 `/v1/events` is the primary extension path. The extension opens a WebSocket,
 sends DOM analysis events, receives immediate `pending` commands that gate
@@ -138,7 +155,47 @@ returns unique stored content rows and total captured encounters for the
 selected site. `/v1/feedback` lists stored user feedback signals, such as active
 thumbs-down feedback for X posts. `/v1/content/annotations` lets agents attach
 tags, notes, topics, or other JSON metadata to stored content without changing
-the original captured content.
+the original captured content. `/v1/rules` manages site-scoped filtering rules.
+New rules default to `draft`; only `active` rules are sent to the AI analyzer.
+Rule status values are `draft`, `active`, `disabled`, and `archived`.
+
+Rule create request shape:
+
+```json
+{
+  "title": "AI slop",
+  "instruction": "Hide generic AI engagement bait.",
+  "source": "user",
+  "examples": {
+    "positive": ["I asked ChatGPT to write this viral thread"],
+    "negative": ["Detailed notes about local AI implementation"]
+  }
+}
+```
+
+Rule update requests accept any subset of `title`, `instruction`, `status`,
+`priority`, `source`, and `examples`. Example arrays replace only the side
+provided. Rule status changes can also use:
+
+```json
+{
+  "status": "active",
+  "source": "user"
+}
+```
+
+Rule validation uses local stored X posts and reports likely matches from rule
+terms and examples. It is a pre-activation blast-radius check, not an AI
+classification pass.
+
+Rule suggestions derive draft candidates from active feedback reasons:
+
+```http
+GET /v1/rule-suggestions?site=x.com&minFeedback=2&limit=20
+```
+
+Suggestions are not stored and are never active automatically. Use their title,
+instruction, and examples to create an explicit draft rule after review.
 
 Annotation request shape:
 

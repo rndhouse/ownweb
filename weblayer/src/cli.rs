@@ -110,6 +110,24 @@ struct RulesCommand {
 enum RulesSubcommand {
     /// List rules for a site.
     List(RulesListArgs),
+    /// Show one rule with audit history.
+    Show(RulesShowArgs),
+    /// Create a draft rule unless a different status is requested.
+    Create(RulesCreateArgs),
+    /// Update rule fields or examples.
+    Update(RulesUpdateArgs),
+    /// Activate a rule.
+    Enable(RulesStatusArgs),
+    /// Disable a rule without deleting it.
+    Disable(RulesStatusArgs),
+    /// Archive a rule so it no longer appears in normal active management.
+    Archive(RulesStatusArgs),
+    /// Change rule priority.
+    Reorder(RulesReorderArgs),
+    /// Test a rule against stored content.
+    Validate(RulesValidateArgs),
+    /// Suggest draft rules from active feedback.
+    Suggest(RulesSuggestArgs),
 }
 
 #[derive(Debug, Clone, Args)]
@@ -122,6 +140,160 @@ struct RulesListArgs {
     status: Option<String>,
     /// Maximum rows to return.
     #[arg(long, default_value_t = 100)]
+    limit: usize,
+    /// Number of matching rows to skip.
+    #[arg(long, default_value_t = 0)]
+    offset: usize,
+    /// Print the raw daemon JSON response.
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, Clone, Args)]
+struct RulesShowArgs {
+    /// Stable rule ID.
+    id: String,
+    /// Site scope to inspect.
+    #[arg(long, default_value = DEFAULT_SITE)]
+    site: String,
+    /// Print the raw daemon JSON response.
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, Clone, Args)]
+struct RulesCreateArgs {
+    /// Optional stable rule ID.
+    #[arg(long)]
+    id: Option<String>,
+    /// Site scope to update.
+    #[arg(long, default_value = DEFAULT_SITE)]
+    site: String,
+    /// Rule lifecycle status. Defaults to draft in the daemon.
+    #[arg(long)]
+    status: Option<String>,
+    /// Lower numbers run earlier.
+    #[arg(long)]
+    priority: Option<i64>,
+    /// Short human-readable rule title.
+    #[arg(long)]
+    title: String,
+    /// Agent-facing instruction text.
+    #[arg(long)]
+    instruction: String,
+    /// Source creating the rule.
+    #[arg(long, default_value = "user")]
+    source: String,
+    /// Example that should match this rule. Can be repeated.
+    #[arg(long = "positive-example")]
+    positive_examples: Vec<String>,
+    /// Example that should not match this rule. Can be repeated.
+    #[arg(long = "negative-example")]
+    negative_examples: Vec<String>,
+    /// Print the raw daemon JSON response.
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, Clone, Args)]
+struct RulesUpdateArgs {
+    /// Stable rule ID.
+    id: String,
+    /// Site scope to update.
+    #[arg(long, default_value = DEFAULT_SITE)]
+    site: String,
+    /// Replacement lifecycle status.
+    #[arg(long)]
+    status: Option<String>,
+    /// Replacement priority.
+    #[arg(long)]
+    priority: Option<i64>,
+    /// Replacement rule title.
+    #[arg(long)]
+    title: Option<String>,
+    /// Replacement instruction text.
+    #[arg(long)]
+    instruction: Option<String>,
+    /// Source updating the rule.
+    #[arg(long, default_value = "user")]
+    source: String,
+    /// Replacement positive example. Can be repeated.
+    #[arg(long = "positive-example")]
+    positive_examples: Vec<String>,
+    /// Clear all positive examples.
+    #[arg(long)]
+    clear_positive_examples: bool,
+    /// Replacement negative example. Can be repeated.
+    #[arg(long = "negative-example")]
+    negative_examples: Vec<String>,
+    /// Clear all negative examples.
+    #[arg(long)]
+    clear_negative_examples: bool,
+    /// Print the raw daemon JSON response.
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, Clone, Args)]
+struct RulesStatusArgs {
+    /// Stable rule ID.
+    id: String,
+    /// Site scope to update.
+    #[arg(long, default_value = DEFAULT_SITE)]
+    site: String,
+    /// Source changing the rule status.
+    #[arg(long, default_value = "user")]
+    source: String,
+    /// Print the raw daemon JSON response.
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, Clone, Args)]
+struct RulesReorderArgs {
+    /// Stable rule ID.
+    id: String,
+    /// New priority. Lower numbers run earlier.
+    priority: i64,
+    /// Site scope to update.
+    #[arg(long, default_value = DEFAULT_SITE)]
+    site: String,
+    /// Source changing the priority.
+    #[arg(long, default_value = "user")]
+    source: String,
+    /// Print the raw daemon JSON response.
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, Clone, Args)]
+struct RulesValidateArgs {
+    /// Stable rule ID.
+    id: String,
+    /// Site scope to inspect.
+    #[arg(long, default_value = DEFAULT_SITE)]
+    site: String,
+    /// Maximum rows to return.
+    #[arg(long, default_value_t = 20)]
+    limit: usize,
+    /// Number of matching rows to skip.
+    #[arg(long, default_value_t = 0)]
+    offset: usize,
+    /// Print the raw daemon JSON response.
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, Clone, Args)]
+struct RulesSuggestArgs {
+    /// Site scope to inspect.
+    #[arg(long, default_value = DEFAULT_SITE)]
+    site: String,
+    /// Minimum active feedback examples required for a suggestion.
+    #[arg(long, default_value_t = 1)]
+    min_feedback: usize,
+    /// Maximum rows to return.
+    #[arg(long, default_value_t = 20)]
     limit: usize,
     /// Number of matching rows to skip.
     #[arg(long, default_value_t = 0)]
@@ -424,28 +596,196 @@ async fn run_status(client: &DaemonClient) -> CliResult<()> {
 }
 
 async fn run_rules(client: &DaemonClient, command: RulesCommand) -> CliResult<()> {
-    let args = match command.command {
-        Some(RulesSubcommand::List(args)) => args,
-        None => RulesListArgs {
+    match command.command.unwrap_or_else(|| {
+        RulesSubcommand::List(RulesListArgs {
             site: DEFAULT_SITE.into(),
             status: None,
             limit: 100,
             offset: 0,
             json: false,
-        },
-    };
-    let mut query = vec![
-        ("site", args.site),
-        ("limit", args.limit.to_string()),
-        ("offset", args.offset.to_string()),
-    ];
-    push_optional_query(&mut query, "status", args.status);
-    let value = client.get_json("/v1/rules", &query).await?;
+        })
+    }) {
+        RulesSubcommand::List(args) => {
+            let mut query = vec![
+                ("site", args.site),
+                ("limit", args.limit.to_string()),
+                ("offset", args.offset.to_string()),
+            ];
+            push_optional_query(&mut query, "status", args.status);
+            let value = client.get_json("/v1/rules", &query).await?;
 
+            if args.json {
+                print_json(&value)?;
+            } else {
+                print_rules(&value);
+            }
+        }
+        RulesSubcommand::Show(args) => {
+            let value = client
+                .get_json(&format!("/v1/rules/{}", args.id), &[("site", args.site)])
+                .await?;
+            if args.json {
+                print_json(&value)?;
+            } else {
+                print_rule_detail(&value);
+            }
+        }
+        RulesSubcommand::Create(args) => {
+            let mut body = json!({
+                "title": args.title,
+                "instruction": args.instruction,
+                "source": args.source,
+                "examples": {
+                    "positive": args.positive_examples,
+                    "negative": args.negative_examples
+                }
+            });
+            if let Some(id) = args.id {
+                body["id"] = json!(id);
+            }
+            if let Some(status) = args.status {
+                body["status"] = json!(status);
+            }
+            if let Some(priority) = args.priority {
+                body["priority"] = json!(priority);
+            }
+
+            let value = client
+                .post_json("/v1/rules", &[("site", args.site)], body)
+                .await?;
+            if args.json {
+                print_json(&value)?;
+            } else {
+                print_rule_saved(&value, "created");
+            }
+        }
+        RulesSubcommand::Update(args) => {
+            let mut body = json!({ "source": args.source });
+            if let Some(status) = args.status {
+                body["status"] = json!(status);
+            }
+            if let Some(priority) = args.priority {
+                body["priority"] = json!(priority);
+            }
+            if let Some(title) = args.title {
+                body["title"] = json!(title);
+            }
+            if let Some(instruction) = args.instruction {
+                body["instruction"] = json!(instruction);
+            }
+
+            let mut examples = serde_json::Map::new();
+            if args.clear_positive_examples || !args.positive_examples.is_empty() {
+                examples.insert("positive".into(), json!(args.positive_examples));
+            }
+            if args.clear_negative_examples || !args.negative_examples.is_empty() {
+                examples.insert("negative".into(), json!(args.negative_examples));
+            }
+            if !examples.is_empty() {
+                body["examples"] = Value::Object(examples);
+            }
+
+            let value = client
+                .post_json(
+                    &format!("/v1/rules/{}", args.id),
+                    &[("site", args.site)],
+                    body,
+                )
+                .await?;
+            if args.json {
+                print_json(&value)?;
+            } else {
+                print_rule_saved(&value, "updated");
+            }
+        }
+        RulesSubcommand::Enable(args) => {
+            run_rule_status(client, args, "active", "enabled").await?;
+        }
+        RulesSubcommand::Disable(args) => {
+            run_rule_status(client, args, "disabled", "disabled").await?;
+        }
+        RulesSubcommand::Archive(args) => {
+            run_rule_status(client, args, "archived", "archived").await?;
+        }
+        RulesSubcommand::Reorder(args) => {
+            let body = json!({
+                "priority": args.priority,
+                "source": args.source
+            });
+            let value = client
+                .post_json(
+                    &format!("/v1/rules/{}", args.id),
+                    &[("site", args.site)],
+                    body,
+                )
+                .await?;
+            if args.json {
+                print_json(&value)?;
+            } else {
+                print_rule_saved(&value, "reordered");
+            }
+        }
+        RulesSubcommand::Validate(args) => {
+            let value = client
+                .get_json(
+                    &format!("/v1/rules/{}/validate", args.id),
+                    &[
+                        ("site", args.site),
+                        ("limit", args.limit.to_string()),
+                        ("offset", args.offset.to_string()),
+                    ],
+                )
+                .await?;
+            if args.json {
+                print_json(&value)?;
+            } else {
+                print_rule_validation(&value);
+            }
+        }
+        RulesSubcommand::Suggest(args) => {
+            let value = client
+                .get_json(
+                    "/v1/rule-suggestions",
+                    &[
+                        ("site", args.site),
+                        ("minFeedback", args.min_feedback.to_string()),
+                        ("limit", args.limit.to_string()),
+                        ("offset", args.offset.to_string()),
+                    ],
+                )
+                .await?;
+            if args.json {
+                print_json(&value)?;
+            } else {
+                print_rule_suggestions(&value);
+            }
+        }
+    }
+
+    Ok(())
+}
+
+async fn run_rule_status(
+    client: &DaemonClient,
+    args: RulesStatusArgs,
+    status: &str,
+    label: &str,
+) -> CliResult<()> {
+    let body = json!({
+        "status": status,
+        "source": args.source
+    });
+    let value = client
+        .post_json(
+            &format!("/v1/rules/{}/status", args.id),
+            &[("site", args.site)],
+            body,
+        )
+        .await?;
     if args.json {
         print_json(&value)?;
     } else {
-        print_rules(&value);
+        print_rule_saved(&value, label);
     }
 
     Ok(())
@@ -628,6 +968,129 @@ fn print_rules(value: &Value) {
     }
 }
 
+fn print_rule_detail(value: &Value) {
+    let rule = value.get("rule").unwrap_or(&Value::Null);
+    println!("rule: {}", value_str(rule, "id").unwrap_or(""));
+    println!("site: {}", value_str(value, "site").unwrap_or(""));
+    println!("status: {}", value_str(rule, "status").unwrap_or(""));
+    println!(
+        "priority: {}",
+        value_i64(rule, "priority")
+            .map(|value| value.to_string())
+            .unwrap_or_default()
+    );
+    println!("title: {}", value_str(rule, "title").unwrap_or(""));
+    println!("source: {}", value_str(rule, "createdSource").unwrap_or(""));
+    println!(
+        "updated: {}",
+        value_i64(rule, "updatedAtUnixMs")
+            .map(|value| value.to_string())
+            .unwrap_or_default()
+    );
+    println!(
+        "instruction: {}",
+        value_str(rule, "instruction").unwrap_or("")
+    );
+
+    let examples = rule.get("examples").unwrap_or(&Value::Null);
+    print_string_array("positive examples", examples.get("positive"));
+    print_string_array("negative examples", examples.get("negative"));
+
+    let audit = value
+        .get("audit")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or(&[]);
+    if !audit.is_empty() {
+        println!("audit:");
+        for event in audit.iter().take(10) {
+            println!(
+                "  {:<12} {:<18} {}",
+                value_str(event, "eventKind").unwrap_or(""),
+                value_str(event, "source").unwrap_or(""),
+                value_i64(event, "createdAtUnixMs")
+                    .map(|value| value.to_string())
+                    .unwrap_or_default()
+            );
+        }
+    }
+}
+
+fn print_rule_saved(value: &Value, action: &str) {
+    let rule = value.get("rule").unwrap_or(&Value::Null);
+    println!(
+        "rule {} {} ({}, priority {})",
+        value_str(rule, "id").unwrap_or("unknown"),
+        action,
+        value_str(rule, "status").unwrap_or("unknown"),
+        value_i64(rule, "priority")
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "unknown".into())
+    );
+}
+
+fn print_rule_validation(value: &Value) {
+    let rule = value.get("rule").unwrap_or(&Value::Null);
+    println!(
+        "rule validation for {}: {} likely matches from {} stored items, limit {}, offset {}",
+        value_str(rule, "id").unwrap_or(""),
+        value_usize(value, "totalMatching").unwrap_or(0),
+        value_usize(value, "totalStored").unwrap_or(0),
+        value_usize(value, "limit").unwrap_or(0),
+        value_usize(value, "offset").unwrap_or(0)
+    );
+    println!(
+        "{:<28} {:<18} {:>5}  {:<24}  TEXT",
+        "STORAGE KEY", "AUTHOR", "SCORE", "MATCHES"
+    );
+    for item in value_items(value) {
+        let content = item.get("content").unwrap_or(&Value::Null);
+        let matched_terms = value_string_array(item, "matchedTerms").join(",");
+        let matched_examples = value_string_array(item, "matchedExamples").join(",");
+        let matches = if matched_examples.is_empty() {
+            matched_terms
+        } else if matched_terms.is_empty() {
+            matched_examples
+        } else {
+            format!("{matched_terms};{matched_examples}")
+        };
+        println!(
+            "{:<28} {:<18} {:>5}  {:<24}  {}",
+            truncate(value_str(content, "storageKey").unwrap_or(""), 28),
+            truncate(value_str(content, "author").unwrap_or(""), 18),
+            value_usize(item, "score")
+                .map(|value| value.to_string())
+                .unwrap_or_default(),
+            truncate(&matches, 24),
+            truncate(value_str(content, "text").unwrap_or(""), 72)
+        );
+    }
+}
+
+fn print_rule_suggestions(value: &Value) {
+    print_page_header("rule suggestions", value);
+    println!("{:<36} {:>8} {:>8}  TITLE", "ID", "FEEDBACK", "PRIORITY");
+    for item in value_items(value) {
+        println!(
+            "{:<36} {:>8} {:>8}  {}",
+            truncate(value_str(item, "id").unwrap_or(""), 36),
+            value_usize(item, "feedbackCount")
+                .map(|value| value.to_string())
+                .unwrap_or_default(),
+            value_i64(item, "priority")
+                .map(|value| value.to_string())
+                .unwrap_or_default(),
+            value_str(item, "title").unwrap_or("")
+        );
+        println!(
+            "  instruction: {}",
+            value_str(item, "instruction").unwrap_or("")
+        );
+        let examples = item.get("examples").unwrap_or(&Value::Null);
+        print_string_array("  positive examples", examples.get("positive"));
+    }
+}
+
 fn print_content(value: &Value) {
     print_page_header("content", value);
     println!("{:<28} {:<18} {:>5}  TEXT", "STORAGE KEY", "AUTHOR", "SEEN");
@@ -775,6 +1238,38 @@ fn value_usize(value: &Value, key: &str) -> Option<usize> {
 
 fn value_bool(value: &Value, key: &str) -> Option<bool> {
     value.get(key).and_then(Value::as_bool)
+}
+
+fn value_string_array(value: &Value, key: &str) -> Vec<String> {
+    value
+        .get(key)
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_str)
+                .map(ToOwned::to_owned)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn print_string_array(label: &str, value: Option<&Value>) {
+    let items = value
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or(&[]);
+    if items.is_empty() {
+        println!("{label}: none");
+        return;
+    }
+
+    println!("{label}:");
+    for item in items {
+        if let Some(text) = item.as_str() {
+            println!("  - {text}");
+        }
+    }
 }
 
 fn truncate(text: &str, max_chars: usize) -> String {

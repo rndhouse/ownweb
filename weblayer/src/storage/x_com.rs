@@ -2,13 +2,17 @@ use crate::{
     core::{AnalysisBatch, ContentItem, FeedbackKind},
     storage::{
         ContentAnnotation, ContentAnnotationInput, ContentAnnotationPage, ContentAnnotationQuery,
-        ContentPage, ContentQuery, ContentRule, ContentStats, RuleExamples, RulePage, RuleQuery,
-        StoredContentItem, XDislikePage, XDislikeQuery, XDislikedPost,
+        ContentPage, ContentQuery, ContentRule, ContentStats, RuleAuditEvent, RuleCreateInput,
+        RuleDetail, RuleExamples, RulePage, RuleQuery, RuleStatusInput, RuleSuggestion,
+        RuleSuggestionPage, RuleSuggestionQuery, RuleUpdateInput, RuleValidationMatch,
+        RuleValidationPage, RuleValidationQuery, StoredContentItem, XDislikePage, XDislikeQuery,
+        XDislikedPost,
     },
 };
 use rusqlite::{params, Connection, OptionalExtension, Row};
 use serde::Serialize;
 use std::{
+    collections::BTreeMap,
     path::Path,
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -20,7 +24,10 @@ const DEFAULT_RULE_STATUS: &str = "active";
 const DEFAULT_RULE_PRIORITY: i64 = 50;
 const DEFAULT_RULE_TITLE: &str = "Engagement bait reaction posts";
 const DEFAULT_RULE_INSTRUCTION: &str = "Downrank engagement bait, dunking, or 'look at this absurd thing' posts where the main content is a reaction to a video, image, or quote rather than a substantive claim.";
-const DEFAULT_RULE_SOURCE: &str = "user";
+const DEFAULT_RULE_SOURCE: &str = "seed";
+const DEFAULT_NEW_RULE_STATUS: &str = "draft";
+const DEFAULT_NEW_RULE_PRIORITY: i64 = 100;
+const RULE_AUDIT_LIMIT: usize = 50;
 
 pub(super) struct Store {
     connection: Connection,
@@ -116,6 +123,18 @@ impl Store {
 
             CREATE INDEX IF NOT EXISTS content_rules_status_priority_idx
                 ON content_rules(status, priority);
+
+            CREATE TABLE IF NOT EXISTS content_rule_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                rule_id TEXT NOT NULL,
+                event_kind TEXT NOT NULL,
+                source TEXT NOT NULL,
+                created_at_unix_ms INTEGER NOT NULL,
+                snapshot_json TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS content_rule_events_rule_time_idx
+                ON content_rule_events(rule_id, created_at_unix_ms);
 
             CREATE TABLE IF NOT EXISTS content_annotations (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -489,6 +508,357 @@ impl Store {
             offset: offset as usize,
             items,
         })
+    }
+
+    pub(super) fn rule_detail(&self, id: &str) -> super::Result<Option<RuleDetail>> {
+        let Some(id) = clean_rule_id_for_lookup(id) else {
+            return Ok(None);
+        };
+        let Some(rule) = self.rule(&id)? else {
+            return Ok(None);
+        };
+        let audit = self.rule_audit(&id, RULE_AUDIT_LIMIT)?;
+
+        Ok(Some(RuleDetail { rule, audit }))
+    }
+
+    pub(super) fn create_rule(&mut self, input: RuleCreateInput) -> super::Result<ContentRule> {
+        let now = now_unix_ms();
+        let title = required_clean_text(&input.title, "title")?;
+        let instruction = required_clean_text(&input.instruction, "instruction")?;
+        let created_source = required_clean_text(&input.created_source, "source")?;
+        let status = clean_rule_status(input.status.as_deref().unwrap_or(DEFAULT_NEW_RULE_STATUS))?;
+        let priority = input.priority.unwrap_or(DEFAULT_NEW_RULE_PRIORITY);
+        let examples = clean_examples(input.examples);
+        let id = match input.id {
+            Some(id) => clean_rule_id(&id)?,
+            None => generated_rule_id(&title, &instruction, now),
+        };
+
+        if self.rule(&id)?.is_some() {
+            return Err(super::StorageError::InvalidInput(format!(
+                "rule id already exists: {id}"
+            )));
+        }
+
+        let examples_json = serde_json::to_string(&examples)?;
+        self.connection.execute(
+            "
+            INSERT INTO content_rules (
+                id,
+                site,
+                status,
+                priority,
+                title,
+                instruction,
+                created_source,
+                created_at_unix_ms,
+                updated_at_unix_ms,
+                examples_json
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8, ?9)
+            ",
+            params![
+                id,
+                SITE_DIR,
+                status,
+                priority,
+                title,
+                instruction,
+                created_source,
+                now,
+                examples_json,
+            ],
+        )?;
+
+        let rule = self
+            .rule(&id)?
+            .expect("created rule should be readable immediately");
+        self.record_rule_event(&rule, "created", &rule.created_source, now)?;
+
+        Ok(rule)
+    }
+
+    pub(super) fn update_rule(
+        &mut self,
+        input: RuleUpdateInput,
+    ) -> super::Result<Option<ContentRule>> {
+        let Some(id) = clean_rule_id_for_lookup(&input.id) else {
+            return Ok(None);
+        };
+        let Some(existing) = self.rule(&id)? else {
+            return Ok(None);
+        };
+
+        let source = required_clean_text(&input.source, "source")?;
+        let status = match input.status {
+            Some(status) => clean_rule_status(&status)?,
+            None => existing.status,
+        };
+        let priority = input.priority.unwrap_or(existing.priority);
+        let title = match input.title {
+            Some(title) => required_clean_text(&title, "title")?,
+            None => existing.title,
+        };
+        let instruction = match input.instruction {
+            Some(instruction) => required_clean_text(&instruction, "instruction")?,
+            None => existing.instruction,
+        };
+        let mut examples = existing.examples;
+        if let Some(positive_examples) = input.positive_examples {
+            examples.positive = clean_example_list(positive_examples);
+        }
+        if let Some(negative_examples) = input.negative_examples {
+            examples.negative = clean_example_list(negative_examples);
+        }
+        let examples_json = serde_json::to_string(&examples)?;
+        let now = now_unix_ms();
+
+        self.connection.execute(
+            "
+            UPDATE content_rules
+            SET
+                status = ?2,
+                priority = ?3,
+                title = ?4,
+                instruction = ?5,
+                updated_at_unix_ms = ?6,
+                examples_json = ?7
+            WHERE id = ?1
+            ",
+            params![id, status, priority, title, instruction, now, examples_json],
+        )?;
+
+        let rule = self
+            .rule(&id)?
+            .expect("updated rule should be readable immediately");
+        self.record_rule_event(&rule, "updated", &source, now)?;
+
+        Ok(Some(rule))
+    }
+
+    pub(super) fn update_rule_status(
+        &mut self,
+        input: RuleStatusInput,
+    ) -> super::Result<Option<ContentRule>> {
+        let Some(id) = clean_rule_id_for_lookup(&input.id) else {
+            return Ok(None);
+        };
+        if self.rule(&id)?.is_none() {
+            return Ok(None);
+        }
+
+        let status = clean_rule_status(&input.status)?;
+        let source = required_clean_text(&input.source, "source")?;
+        let now = now_unix_ms();
+        self.connection.execute(
+            "
+            UPDATE content_rules
+            SET status = ?2, updated_at_unix_ms = ?3
+            WHERE id = ?1
+            ",
+            params![id, status, now],
+        )?;
+
+        let rule = self
+            .rule(&id)?
+            .expect("status-updated rule should be readable immediately");
+        self.record_rule_event(&rule, rule_status_event_kind(&rule.status), &source, now)?;
+
+        Ok(Some(rule))
+    }
+
+    pub(super) fn validate_rule(
+        &self,
+        id: &str,
+        query: RuleValidationQuery,
+    ) -> super::Result<Option<RuleValidationPage>> {
+        let Some(id) = clean_rule_id_for_lookup(id) else {
+            return Ok(None);
+        };
+        let Some(rule) = self.rule(&id)? else {
+            return Ok(None);
+        };
+
+        let matcher = RuleMatcher::new(&rule);
+        let total_stored = self
+            .connection
+            .query_row("SELECT COUNT(*) FROM tweets", [], |row| {
+                row.get::<_, i64>(0)
+            })?;
+        let mut statement = self.connection.prepare(
+            "
+            SELECT
+                storage_key,
+                post_id,
+                url,
+                author_handle,
+                text,
+                first_seen_at_unix_ms,
+                last_seen_at_unix_ms,
+                seen_count,
+                latest_captured_at
+            FROM tweets
+            ORDER BY last_seen_at_unix_ms DESC, storage_key ASC
+            ",
+        )?;
+        let mut matches = Vec::new();
+        let rows = statement.query_map([], |row| content_item_from_row(row, None))?;
+        for row in rows {
+            let content = row?;
+            if let Some(rule_match) = matcher.evaluate(content) {
+                matches.push(rule_match);
+            }
+        }
+
+        matches.sort_by(|left, right| {
+            right
+                .score
+                .cmp(&left.score)
+                .then_with(|| {
+                    right
+                        .content
+                        .last_seen_at_unix_ms
+                        .cmp(&left.content.last_seen_at_unix_ms)
+                })
+                .then_with(|| left.content.storage_key.cmp(&right.content.storage_key))
+        });
+
+        let limit = query.limit.min(i64::MAX as usize);
+        let offset = query.offset.min(i64::MAX as usize);
+        let total_matching = matches.len();
+        let items = matches.into_iter().skip(offset).take(limit).collect();
+
+        Ok(Some(RuleValidationPage {
+            rule,
+            total_stored: total_stored.max(0) as usize,
+            total_matching,
+            limit,
+            offset,
+            items,
+        }))
+    }
+
+    pub(super) fn rule_suggestions(
+        &self,
+        query: RuleSuggestionQuery,
+    ) -> super::Result<RuleSuggestionPage> {
+        let min_feedback = query.min_feedback.max(1);
+        let limit = query.limit.min(i64::MAX as usize);
+        let offset = query.offset.min(i64::MAX as usize);
+        let page = self.dislikes(XDislikeQuery {
+            active: Some(true),
+            limit: 500,
+            offset: 0,
+        })?;
+        let mut groups = BTreeMap::<String, Vec<XDislikedPost>>::new();
+
+        for item in page.items {
+            let reason = clean_feedback_reason(&item.reason);
+            groups.entry(reason).or_default().push(item);
+        }
+
+        let mut suggestions = groups
+            .into_iter()
+            .filter_map(|(reason, evidence)| {
+                (evidence.len() >= min_feedback)
+                    .then(|| rule_suggestion_from_feedback(reason, evidence))
+            })
+            .collect::<Vec<_>>();
+        suggestions.sort_by(|left, right| {
+            right
+                .feedback_count
+                .cmp(&left.feedback_count)
+                .then_with(|| left.title.cmp(&right.title))
+        });
+
+        let total_matching = suggestions.len();
+        let items = suggestions.into_iter().skip(offset).take(limit).collect();
+
+        Ok(RuleSuggestionPage {
+            total_matching,
+            limit,
+            offset,
+            items,
+        })
+    }
+
+    fn rule(&self, id: &str) -> super::Result<Option<ContentRule>> {
+        Ok(self
+            .connection
+            .query_row(
+                "
+                SELECT
+                    id,
+                    site,
+                    status,
+                    priority,
+                    title,
+                    instruction,
+                    created_source,
+                    created_at_unix_ms,
+                    updated_at_unix_ms,
+                    examples_json
+                FROM content_rules
+                WHERE id = ?1
+                ",
+                [id],
+                content_rule_from_row,
+            )
+            .optional()?)
+    }
+
+    fn rule_audit(&self, id: &str, limit: usize) -> super::Result<Vec<RuleAuditEvent>> {
+        let limit = sqlite_limit(limit);
+        let mut statement = self.connection.prepare(
+            "
+            SELECT
+                id,
+                rule_id,
+                event_kind,
+                source,
+                created_at_unix_ms,
+                snapshot_json
+            FROM content_rule_events
+            WHERE rule_id = ?1
+            ORDER BY created_at_unix_ms DESC, id DESC
+            LIMIT ?2
+            ",
+        )?;
+        let events = statement
+            .query_map(params![id, limit], rule_audit_event_from_row)?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+
+        Ok(events)
+    }
+
+    fn record_rule_event(
+        &self,
+        rule: &ContentRule,
+        event_kind: &str,
+        source: &str,
+        created_at_unix_ms: i64,
+    ) -> super::Result<()> {
+        let snapshot_json = serde_json::to_string(rule)?;
+        self.connection.execute(
+            "
+            INSERT INTO content_rule_events (
+                rule_id,
+                event_kind,
+                source,
+                created_at_unix_ms,
+                snapshot_json
+            ) VALUES (?1, ?2, ?3, ?4, ?5)
+            ",
+            params![
+                rule.id.as_str(),
+                event_kind,
+                source,
+                created_at_unix_ms,
+                snapshot_json
+            ],
+        )?;
+
+        Ok(())
     }
 
     pub(super) fn content_stats(&self) -> super::Result<ContentStats> {
@@ -938,7 +1308,7 @@ fn seed_default_rules(connection: &Connection) -> super::Result<()> {
         negative: Vec::new(),
     })?;
 
-    connection.execute(
+    let inserted = connection.execute(
         "
         INSERT OR IGNORE INTO content_rules (
             id,
@@ -965,6 +1335,56 @@ fn seed_default_rules(connection: &Connection) -> super::Result<()> {
             examples_json,
         ],
     )?;
+    let event_count = connection.query_row(
+        "
+        SELECT COUNT(*)
+        FROM content_rule_events
+        WHERE rule_id = ?1
+        ",
+        [DEFAULT_RULE_ID],
+        |row| row.get::<_, i64>(0),
+    )?;
+    if event_count == 0 {
+        let rule = connection.query_row(
+            "
+            SELECT
+                id,
+                site,
+                status,
+                priority,
+                title,
+                instruction,
+                created_source,
+                created_at_unix_ms,
+                updated_at_unix_ms,
+                examples_json
+            FROM content_rules
+            WHERE id = ?1
+            ",
+            [DEFAULT_RULE_ID],
+            content_rule_from_row,
+        )?;
+        let snapshot_json = serde_json::to_string(&rule)?;
+        let event_kind = if inserted > 0 { "created" } else { "imported" };
+        connection.execute(
+            "
+            INSERT INTO content_rule_events (
+                rule_id,
+                event_kind,
+                source,
+                created_at_unix_ms,
+                snapshot_json
+            ) VALUES (?1, ?2, ?3, ?4, ?5)
+            ",
+            params![
+                DEFAULT_RULE_ID,
+                event_kind,
+                rule.created_source,
+                now,
+                snapshot_json
+            ],
+        )?;
+    }
 
     Ok(())
 }
@@ -1047,6 +1467,42 @@ fn content_annotation_from_row(row: &Row<'_>) -> rusqlite::Result<ContentAnnotat
     })
 }
 
+fn content_rule_from_row(row: &Row<'_>) -> rusqlite::Result<ContentRule> {
+    let examples_json: String = row.get(9)?;
+    let examples = serde_json::from_str(&examples_json).map_err(|error| {
+        rusqlite::Error::FromSqlConversionFailure(9, rusqlite::types::Type::Text, Box::new(error))
+    })?;
+
+    Ok(ContentRule {
+        id: row.get(0)?,
+        site: row.get(1)?,
+        status: row.get(2)?,
+        priority: row.get(3)?,
+        title: row.get(4)?,
+        instruction: row.get(5)?,
+        created_source: row.get(6)?,
+        created_at_unix_ms: row.get(7)?,
+        updated_at_unix_ms: row.get(8)?,
+        examples,
+    })
+}
+
+fn rule_audit_event_from_row(row: &Row<'_>) -> rusqlite::Result<RuleAuditEvent> {
+    let snapshot_json: String = row.get(5)?;
+    let snapshot = serde_json::from_str(&snapshot_json).map_err(|error| {
+        rusqlite::Error::FromSqlConversionFailure(5, rusqlite::types::Type::Text, Box::new(error))
+    })?;
+
+    Ok(RuleAuditEvent {
+        id: row.get(0)?,
+        rule_id: row.get(1)?,
+        event_kind: row.get(2)?,
+        source: row.get(3)?,
+        created_at_unix_ms: row.get(4)?,
+        snapshot,
+    })
+}
+
 fn annotation_storage_key(storage_key: Option<&str>, content_id: Option<&str>) -> Option<String> {
     clean_optional(storage_key)
         .or_else(|| clean_optional(content_id).map(|content_id| format!("x:id:{content_id}")))
@@ -1121,6 +1577,300 @@ fn clean_optional(value: Option<&str>) -> Option<String> {
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToOwned::to_owned)
+}
+
+fn required_clean_text(value: &str, field: &str) -> super::Result<String> {
+    clean_optional(Some(value))
+        .ok_or_else(|| super::StorageError::InvalidInput(format!("{field} must not be empty")))
+}
+
+fn clean_rule_id(value: &str) -> super::Result<String> {
+    let id = required_clean_text(value, "id")?;
+    let valid = id
+        .chars()
+        .all(|character| character.is_ascii_alphanumeric() || character == '-' || character == '_');
+    if !valid {
+        return Err(super::StorageError::InvalidInput(
+            "id may contain only ASCII letters, numbers, hyphens, and underscores".into(),
+        ));
+    }
+
+    Ok(id)
+}
+
+fn clean_rule_id_for_lookup(value: &str) -> Option<String> {
+    let value = value.trim();
+    (!value.is_empty()).then(|| value.to_string())
+}
+
+fn clean_rule_status(value: &str) -> super::Result<String> {
+    let status = required_clean_text(value, "status")?.to_ascii_lowercase();
+    match status.as_str() {
+        "draft" | "active" | "disabled" | "archived" => Ok(status),
+        _ => Err(super::StorageError::InvalidInput(format!(
+            "unsupported rule status: {status}"
+        ))),
+    }
+}
+
+fn clean_examples(examples: RuleExamples) -> RuleExamples {
+    RuleExamples {
+        positive: clean_example_list(examples.positive),
+        negative: clean_example_list(examples.negative),
+    }
+}
+
+fn clean_example_list(examples: Vec<String>) -> Vec<String> {
+    let mut cleaned = Vec::new();
+    for example in examples {
+        let example = normalize_text(&example);
+        if example.is_empty() || cleaned.contains(&example) {
+            continue;
+        }
+        cleaned.push(example);
+    }
+
+    cleaned
+}
+
+fn generated_rule_id(title: &str, instruction: &str, now_unix_ms: i64) -> String {
+    let slug = rule_slug(title);
+    let hash = stable_hash(&format!("{title}\n{instruction}\n{now_unix_ms}"));
+    format!("x-{slug}-{:08x}", hash as u32)
+}
+
+fn rule_slug(title: &str) -> String {
+    let mut slug = String::new();
+    let mut last_was_separator = false;
+
+    for character in title.chars().flat_map(char::to_lowercase) {
+        if character.is_ascii_alphanumeric() {
+            slug.push(character);
+            last_was_separator = false;
+        } else if !last_was_separator && !slug.is_empty() {
+            slug.push('-');
+            last_was_separator = true;
+        }
+
+        if slug.len() >= 48 {
+            break;
+        }
+    }
+
+    while slug.ends_with('-') {
+        slug.pop();
+    }
+
+    if slug.is_empty() {
+        "rule".into()
+    } else {
+        slug
+    }
+}
+
+fn rule_status_event_kind(status: &str) -> &'static str {
+    match status {
+        "active" => "enabled",
+        "disabled" => "disabled",
+        "archived" => "archived",
+        "draft" => "drafted",
+        _ => "statusChanged",
+    }
+}
+
+struct RuleMatcher {
+    terms: Vec<String>,
+    positive_examples: Vec<String>,
+    negative_examples: Vec<String>,
+}
+
+impl RuleMatcher {
+    fn new(rule: &ContentRule) -> Self {
+        let mut terms = Vec::new();
+        for source in [&rule.title, &rule.instruction] {
+            collect_match_terms(source, &mut terms);
+        }
+        for example in &rule.examples.positive {
+            collect_match_terms(example, &mut terms);
+        }
+
+        Self {
+            terms,
+            positive_examples: normalized_examples(&rule.examples.positive),
+            negative_examples: normalized_examples(&rule.examples.negative),
+        }
+    }
+
+    fn evaluate(&self, content: StoredContentItem) -> Option<RuleValidationMatch> {
+        let text = content.text.to_ascii_lowercase();
+        if text.is_empty()
+            || self
+                .negative_examples
+                .iter()
+                .any(|example| text.contains(example))
+        {
+            return None;
+        }
+
+        let matched_terms = self
+            .terms
+            .iter()
+            .filter(|term| text_contains_token(&text, term))
+            .cloned()
+            .collect::<Vec<_>>();
+        let matched_examples = self
+            .positive_examples
+            .iter()
+            .filter(|example| text.contains(*example))
+            .cloned()
+            .collect::<Vec<_>>();
+
+        if matched_terms.is_empty() && matched_examples.is_empty() {
+            return None;
+        }
+
+        let score = matched_terms.len() + matched_examples.len() * 5;
+        Some(RuleValidationMatch {
+            content,
+            score,
+            matched_terms,
+            matched_examples,
+        })
+    }
+}
+
+fn collect_match_terms(text: &str, terms: &mut Vec<String>) {
+    for token in text
+        .split(|character: char| !character.is_ascii_alphanumeric())
+        .map(str::trim)
+        .filter(|token| token.len() >= 4)
+        .map(str::to_ascii_lowercase)
+    {
+        if is_rule_match_stop_word(&token) || terms.contains(&token) {
+            continue;
+        }
+        terms.push(token);
+    }
+}
+
+fn normalized_examples(examples: &[String]) -> Vec<String> {
+    examples
+        .iter()
+        .map(|example| normalize_text(example).to_ascii_lowercase())
+        .filter(|example| example.len() >= 8)
+        .collect()
+}
+
+fn text_contains_token(text: &str, token: &str) -> bool {
+    text.split(|character: char| !character.is_ascii_alphanumeric())
+        .any(|candidate| candidate.eq_ignore_ascii_case(token))
+}
+
+fn is_rule_match_stop_word(token: &str) -> bool {
+    matches!(
+        token,
+        "about"
+            | "active"
+            | "after"
+            | "again"
+            | "against"
+            | "because"
+            | "content"
+            | "downrank"
+            | "from"
+            | "hide"
+            | "like"
+            | "main"
+            | "more"
+            | "post"
+            | "posts"
+            | "rather"
+            | "rule"
+            | "rules"
+            | "should"
+            | "site"
+            | "source"
+            | "status"
+            | "than"
+            | "that"
+            | "this"
+            | "tweet"
+            | "tweets"
+            | "where"
+            | "with"
+    )
+}
+
+fn clean_feedback_reason(reason: &str) -> String {
+    let reason = normalize_text(reason);
+    if reason.is_empty() {
+        "thumbs-down feedback".into()
+    } else {
+        reason
+    }
+}
+
+fn rule_suggestion_from_feedback(
+    reason: String,
+    mut evidence: Vec<XDislikedPost>,
+) -> RuleSuggestion {
+    evidence.sort_by(|left, right| {
+        right
+            .updated_at_unix_ms
+            .cmp(&left.updated_at_unix_ms)
+            .then_with(|| left.storage_key.cmp(&right.storage_key))
+    });
+    let title_reason = sentence_case(&reason);
+    let title = format!("Feedback: {}", truncate_for_rule(&title_reason, 72));
+    let instruction = format!(
+        "Hide X posts similar to posts the user disliked for this reason: {}.",
+        reason
+    );
+    let examples = RuleExamples {
+        positive: evidence
+            .iter()
+            .filter_map(|item| clean_optional(Some(item.text.as_str())))
+            .take(5)
+            .collect(),
+        negative: Vec::new(),
+    };
+    let id = format!(
+        "x-feedback-{}-{:08x}",
+        rule_slug(&reason),
+        stable_hash(&reason) as u32
+    );
+
+    RuleSuggestion {
+        id,
+        status: DEFAULT_NEW_RULE_STATUS.into(),
+        priority: DEFAULT_NEW_RULE_PRIORITY,
+        title,
+        instruction,
+        source: "feedback".into(),
+        feedback_count: evidence.len(),
+        reasons: vec![reason],
+        examples,
+        evidence: evidence.into_iter().take(10).collect(),
+    }
+}
+
+fn sentence_case(text: &str) -> String {
+    let mut chars = text.chars();
+    let Some(first) = chars.next() else {
+        return String::new();
+    };
+
+    format!("{}{}", first.to_uppercase(), chars.collect::<String>())
+}
+
+fn truncate_for_rule(text: &str, max_chars: usize) -> String {
+    let mut chars = text.chars();
+    let truncated: String = chars.by_ref().take(max_chars).collect();
+    if chars.next().is_some() {
+        format!("{truncated}...")
+    } else {
+        truncated
+    }
 }
 
 fn normalize_text(text: &str) -> String {
@@ -1702,6 +2452,193 @@ mod tests {
         assert_eq!(rules.items[0].created_source, DEFAULT_RULE_SOURCE);
         assert!(rules.items[0].examples.positive.is_empty());
         assert!(rules.items[0].examples.negative.is_empty());
+
+        let _ = std::fs::remove_dir_all(db_path.parent().unwrap().parent().unwrap());
+    }
+
+    #[test]
+    fn creates_rules_as_drafts_with_audit_history() {
+        let db_path = temp_db_path("creates-rule");
+        let mut store = Store::open(&db_path).expect("store should open");
+
+        let rule = store
+            .create_rule(RuleCreateInput {
+                id: Some("x-ai-slop".into()),
+                status: None,
+                priority: None,
+                title: "AI slop".into(),
+                instruction: "Hide generic AI engagement bait.".into(),
+                created_source: "user".into(),
+                examples: RuleExamples {
+                    positive: vec!["I asked ChatGPT to write this viral thread".into()],
+                    negative: vec!["Detailed local AI implementation notes".into()],
+                },
+            })
+            .expect("rule should be created");
+        let detail = store
+            .rule_detail("x-ai-slop")
+            .expect("rule detail should load")
+            .expect("rule should exist");
+
+        assert_eq!(rule.status, "draft");
+        assert_eq!(rule.priority, DEFAULT_NEW_RULE_PRIORITY);
+        assert_eq!(detail.rule.id, "x-ai-slop");
+        assert_eq!(detail.audit.len(), 1);
+        assert_eq!(detail.audit[0].event_kind, "created");
+        assert_eq!(detail.audit[0].source, "user");
+
+        let _ = std::fs::remove_dir_all(db_path.parent().unwrap().parent().unwrap());
+    }
+
+    #[test]
+    fn updates_rule_status_priority_and_examples() {
+        let db_path = temp_db_path("updates-rule");
+        let mut store = Store::open(&db_path).expect("store should open");
+
+        store
+            .create_rule(RuleCreateInput {
+                id: Some("x-low-value".into()),
+                status: None,
+                priority: None,
+                title: "Low value".into(),
+                instruction: "Hide low value posts.".into(),
+                created_source: "user".into(),
+                examples: RuleExamples::default(),
+            })
+            .expect("rule should be created");
+        let updated = store
+            .update_rule(RuleUpdateInput {
+                id: "x-low-value".into(),
+                status: Some("active".into()),
+                priority: Some(25),
+                title: Some("Low-value engagement".into()),
+                instruction: None,
+                source: "user".into(),
+                positive_examples: Some(vec!["reply with yes if you agree".into()]),
+                negative_examples: None,
+            })
+            .expect("rule should update")
+            .expect("rule should exist");
+        let disabled = store
+            .update_rule_status(RuleStatusInput {
+                id: "x-low-value".into(),
+                status: "disabled".into(),
+                source: "user".into(),
+            })
+            .expect("status should update")
+            .expect("rule should exist");
+        let detail = store
+            .rule_detail("x-low-value")
+            .expect("rule detail should load")
+            .expect("rule should exist");
+
+        assert_eq!(updated.status, "active");
+        assert_eq!(updated.priority, 25);
+        assert_eq!(updated.title, "Low-value engagement");
+        assert_eq!(
+            updated.examples.positive,
+            vec!["reply with yes if you agree".to_string()]
+        );
+        assert_eq!(disabled.status, "disabled");
+        assert_eq!(detail.audit.len(), 3);
+        assert_eq!(detail.audit[0].event_kind, "disabled");
+        assert_eq!(detail.audit[1].event_kind, "updated");
+
+        let _ = std::fs::remove_dir_all(db_path.parent().unwrap().parent().unwrap());
+    }
+
+    #[test]
+    fn validates_rules_against_stored_content() {
+        let db_path = temp_db_path("validates-rule");
+        let mut store = Store::open(&db_path).expect("store should open");
+
+        store
+            .record_batch(&batch(
+                "x.com",
+                vec![
+                    item(
+                        "client-1",
+                        Some("123"),
+                        "Reply with yes if you agree with this viral engagement bait",
+                    ),
+                    item("client-2", Some("456"), "Detailed notes about local search"),
+                ],
+            ))
+            .expect("content should store");
+        store
+            .create_rule(RuleCreateInput {
+                id: Some("x-engagement".into()),
+                status: Some("active".into()),
+                priority: Some(10),
+                title: "Engagement bait".into(),
+                instruction: "Hide engagement bait posts.".into(),
+                created_source: "user".into(),
+                examples: RuleExamples {
+                    positive: vec!["reply with yes if you agree".into()],
+                    negative: vec!["Detailed notes about local search".into()],
+                },
+            })
+            .expect("rule should be created");
+
+        let page = store
+            .validate_rule(
+                "x-engagement",
+                RuleValidationQuery {
+                    limit: 10,
+                    offset: 0,
+                },
+            )
+            .expect("validation should run")
+            .expect("rule should exist");
+
+        assert_eq!(page.total_stored, 2);
+        assert_eq!(page.total_matching, 1);
+        assert_eq!(page.items[0].content.content_id.as_deref(), Some("123"));
+        assert!(page.items[0]
+            .matched_examples
+            .contains(&"reply with yes if you agree".to_string()));
+
+        let _ = std::fs::remove_dir_all(db_path.parent().unwrap().parent().unwrap());
+    }
+
+    #[test]
+    fn suggests_draft_rules_from_active_feedback_reasons() {
+        let db_path = temp_db_path("suggests-rule");
+        let mut store = Store::open(&db_path).expect("store should open");
+        let first = item("client-1", Some("123"), "Engagement bait example one");
+        let second = item("client-2", Some("456"), "Engagement bait example two");
+        let ignored = item("client-3", Some("789"), "Different reason example");
+
+        store
+            .record_batch(&batch(
+                "x.com",
+                vec![first.clone(), second.clone(), ignored.clone()],
+            ))
+            .expect("content should store");
+        store
+            .record_feedback(&first, FeedbackKind::ThumbsDown, "engagement bait")
+            .expect("feedback should store");
+        store
+            .record_feedback(&second, FeedbackKind::ThumbsDown, "engagement bait")
+            .expect("feedback should store");
+        store
+            .record_feedback(&ignored, FeedbackKind::ThumbsDown, "spam")
+            .expect("feedback should store");
+
+        let page = store
+            .rule_suggestions(RuleSuggestionQuery {
+                min_feedback: 2,
+                limit: 10,
+                offset: 0,
+            })
+            .expect("suggestions should load");
+
+        assert_eq!(page.total_matching, 1);
+        assert_eq!(page.items[0].status, "draft");
+        assert_eq!(page.items[0].source, "feedback");
+        assert_eq!(page.items[0].feedback_count, 2);
+        assert_eq!(page.items[0].reasons, vec!["engagement bait".to_string()]);
+        assert_eq!(page.items[0].examples.positive.len(), 2);
 
         let _ = std::fs::remove_dir_all(db_path.parent().unwrap().parent().unwrap());
     }
