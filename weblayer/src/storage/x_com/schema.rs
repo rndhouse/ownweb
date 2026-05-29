@@ -40,7 +40,7 @@ pub(super) fn initialize(connection: &Connection) -> Result<()> {
         author_handle TEXT,
         captured_at TEXT,
         payload_json TEXT NOT NULL,
-        rule_context_json TEXT
+        rule_context_json TEXT NOT NULL
     );
 
     CREATE INDEX IF NOT EXISTS tweet_feedback_storage_key_idx
@@ -63,7 +63,7 @@ pub(super) fn initialize(connection: &Connection) -> Result<()> {
         author_handle TEXT,
         latest_captured_at TEXT,
         latest_payload_json TEXT NOT NULL,
-        latest_rule_context_json TEXT
+        latest_rule_context_json TEXT NOT NULL
     );
 
     CREATE INDEX IF NOT EXISTS tweet_feedback_state_active_idx
@@ -136,13 +136,13 @@ fn migrate_feedback_context(connection: &Connection) -> Result<()> {
         connection,
         "tweet_feedback",
         "rule_context_json",
-        "ALTER TABLE tweet_feedback ADD COLUMN rule_context_json TEXT",
+        "ALTER TABLE tweet_feedback ADD COLUMN rule_context_json TEXT NOT NULL DEFAULT '{\"activeRules\":[]}'",
     )?;
     ensure_column(
         connection,
         "tweet_feedback_state",
         "latest_rule_context_json",
-        "ALTER TABLE tweet_feedback_state ADD COLUMN latest_rule_context_json TEXT",
+        "ALTER TABLE tweet_feedback_state ADD COLUMN latest_rule_context_json TEXT NOT NULL DEFAULT '{\"activeRules\":[]}'",
     )?;
 
     Ok(())

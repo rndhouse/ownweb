@@ -107,8 +107,7 @@ pub struct DomFeedbackRequest {
     /// DOM region that received feedback.
     pub element: DomElementSnapshot,
     /// Rule context emitted by the daemon when the feedback control was rendered.
-    #[serde(default)]
-    pub feedback_context: Option<FeedbackContext>,
+    pub feedback_context: FeedbackContext,
 }
 
 /// Response for a DOM feedback request.

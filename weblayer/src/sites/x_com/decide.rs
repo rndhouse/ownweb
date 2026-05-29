@@ -11,7 +11,7 @@ pub(super) fn record_feedback(
     items: &[ContentItem],
     feedback: FeedbackKind,
     reason: &str,
-    feedback_context: Option<&FeedbackContext>,
+    feedback_context: &FeedbackContext,
 ) {
     for item in items {
         if let Err(error) =

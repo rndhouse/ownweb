@@ -89,7 +89,7 @@ pub fn apply_feedback(
     batch: &DomAnalysisBatch,
     feedback: FeedbackKind,
     reason: &str,
-    feedback_context: Option<FeedbackContext>,
+    feedback_context: FeedbackContext,
     content_store: &ContentStore,
 ) -> Vec<DomCommand> {
     let extracted_items = extract::extract_items(batch);
@@ -99,21 +99,12 @@ pub fn apply_feedback(
 
     let content_batch = content_batch_from_extracted(&extracted_items);
     record_content_batch(content_store, &content_batch);
-    let fallback_context;
-    let feedback_context = match feedback_context.as_ref() {
-        Some(feedback_context) => Some(feedback_context),
-        None => {
-            let active_rules = decide::active_x_rules(content_store);
-            fallback_context = feedback_context_from_active_rules(&active_rules);
-            Some(&fallback_context)
-        }
-    };
     decide::record_feedback(
         content_store,
         &content_batch.items,
         feedback,
         reason,
-        feedback_context,
+        &feedback_context,
     );
 
     Vec::new()

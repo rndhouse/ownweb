@@ -442,11 +442,9 @@ async function sendFeedbackEvent(element, feedback, reason, button) {
     feedback,
     reason,
     page: pageSnapshot(),
-    element: snapshot
+    element: snapshot,
+    feedbackContext
   };
-  if (feedbackContext) {
-    message.feedbackContext = feedbackContext;
-  }
 
   return sendMessage(message);
 }
@@ -920,9 +918,10 @@ function createFeedbackButton(clientId, label, isSubjectPost, feedbackContext) {
 }
 
 function storeFeedbackContext(button, feedbackContext) {
-  if (feedbackContext && typeof feedbackContext === "object" && !Array.isArray(feedbackContext)) {
-    button.dataset.weblayerFeedbackContext = JSON.stringify(feedbackContext);
+  if (!feedbackContext || typeof feedbackContext !== "object" || Array.isArray(feedbackContext)) {
+    throw new Error("Feedback context is required.");
   }
+  button.dataset.weblayerFeedbackContext = JSON.stringify(feedbackContext);
 }
 
 function currentFeedbackContext(element, clientId, button) {
@@ -930,17 +929,22 @@ function currentFeedbackContext(element, clientId, button) {
     `.weblayer-feedback-button[data-weblayer-client-id="${cssEscape(clientId)}"]`
   );
   if (!source || !source.dataset.weblayerFeedbackContext) {
-    return null;
+    throw new Error("Feedback context is missing.");
   }
 
   try {
     const feedbackContext = JSON.parse(source.dataset.weblayerFeedbackContext);
-    return feedbackContext && typeof feedbackContext === "object" && !Array.isArray(feedbackContext)
-      ? feedbackContext
-      : null;
+    if (
+      !feedbackContext ||
+      typeof feedbackContext !== "object" ||
+      Array.isArray(feedbackContext)
+    ) {
+      throw new Error("Feedback context is invalid.");
+    }
+    return feedbackContext;
   } catch (_error) {
     delete source.dataset.weblayerFeedbackContext;
-    return null;
+    throw new Error("Feedback context is invalid.");
   }
 }
 

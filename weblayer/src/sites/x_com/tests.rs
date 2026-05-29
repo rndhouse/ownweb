@@ -8,7 +8,7 @@ use crate::{
     ai::{AiAction, AiAnalyzer, AiOpinion},
     core::{
         ContentItem, DecisionAction, DomAnalysisBatch, DomAttribute, DomElementSnapshot, DomLink,
-        FeedbackKind, PageSnapshot,
+        FeedbackContext, FeedbackKind, PageSnapshot,
     },
     storage::ContentStore,
 };
@@ -328,7 +328,7 @@ fn thumbs_down_feedback_records_state_without_hiding_immediately() {
         &batch,
         FeedbackKind::ThumbsDown,
         "low quality",
-        None,
+        FeedbackContext::default(),
         &content_store,
     );
     let pending_commands = pending_dom_commands(&batch, &ai_analyzer, &content_store);

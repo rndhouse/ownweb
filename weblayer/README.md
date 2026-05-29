@@ -281,8 +281,8 @@ DOM analysis response shape:
 }
 ```
 
-`insertFeedbackControl` commands may also include `feedbackContext`, with
-active rule snapshots and item-specific decision metadata for later feedback.
+`insertFeedbackControl` commands include `feedbackContext`, with active rule
+snapshots and item-specific decision metadata for later feedback.
 
 WebSocket request shape:
 

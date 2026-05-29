@@ -88,8 +88,8 @@ pub struct XDislikedPost {
     pub seen_count: Option<i64>,
     /// Latest client-side capture timestamp.
     pub latest_captured_at: Option<String>,
-    /// Rule context captured with the latest feedback event when available.
-    pub rule_context: Option<FeedbackContext>,
+    /// Rule context captured with the latest feedback event.
+    pub rule_context: FeedbackContext,
 }
 
 /// Aggregate counts for content stored under one site scope.
@@ -537,7 +537,7 @@ impl ContentStore {
         item: &ContentItem,
         feedback: FeedbackKind,
         reason: &str,
-        feedback_context: Option<&FeedbackContext>,
+        feedback_context: &FeedbackContext,
     ) -> Result<bool> {
         let mut db = self
             .x_com

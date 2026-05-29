@@ -39,7 +39,7 @@ pub fn apply_feedback(
     batch: &DomAnalysisBatch,
     feedback: FeedbackKind,
     reason: &str,
-    feedback_context: Option<FeedbackContext>,
+    feedback_context: FeedbackContext,
     content_store: &ContentStore,
 ) -> Vec<DomCommand> {
     match page_host(&batch.page.url).as_deref() {

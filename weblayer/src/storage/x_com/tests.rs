@@ -31,6 +31,10 @@ fn batch(source: &str, items: Vec<ContentItem>) -> AnalysisBatch {
     AnalysisBatch::new(source, items)
 }
 
+fn feedback_context() -> FeedbackContext {
+    FeedbackContext::default()
+}
+
 fn temp_db_path(name: &str) -> PathBuf {
     let data_dir = std::env::temp_dir().join(format!(
         "weblayer-x-storage-test-{name}-{}",
@@ -255,7 +259,7 @@ fn records_feedback_rule_context_for_x_post() {
             &item,
             FeedbackKind::ThumbsDown,
             "low value",
-            Some(&feedback_context),
+            &feedback_context,
         )
         .expect("feedback should store");
 
@@ -283,7 +287,7 @@ fn records_feedback_rule_context_for_x_post() {
         serde_json::from_str::<FeedbackContext>(&stored_context).expect("context should parse"),
         feedback_context
     );
-    assert_eq!(page.items[0].rule_context, Some(feedback_context));
+    assert_eq!(page.items[0].rule_context, feedback_context);
 
     let _ = std::fs::remove_dir_all(db_path.parent().unwrap().parent().unwrap());
 }
@@ -295,7 +299,7 @@ fn records_thumbs_down_feedback_for_x_post() {
     let item = item("client-1", Some("123"), "hello");
 
     let recorded = store
-        .record_feedback_with_context(&item, FeedbackKind::ThumbsDown, "", None)
+        .record_feedback_with_context(&item, FeedbackKind::ThumbsDown, "", &feedback_context())
         .expect("feedback should store");
 
     let (storage_key, post_id, feedback_kind, reason, client_id): (
@@ -352,10 +356,15 @@ fn updates_feedback_state_reason_for_x_post() {
     let item = item("client-1", Some("123"), "hello");
 
     store
-        .record_feedback_with_context(&item, FeedbackKind::ThumbsDown, "", None)
+        .record_feedback_with_context(&item, FeedbackKind::ThumbsDown, "", &feedback_context())
         .expect("feedback should store");
     store
-        .record_feedback_with_context(&item, FeedbackKind::UpdateReason, "low information", None)
+        .record_feedback_with_context(
+            &item,
+            FeedbackKind::UpdateReason,
+            "low information",
+            &feedback_context(),
+        )
         .expect("reason should store");
 
     let state = store
@@ -392,10 +401,15 @@ fn undo_feedback_deactivates_feedback_state_for_x_post() {
     let item = item("client-1", Some("123"), "hello");
 
     store
-        .record_feedback_with_context(&item, FeedbackKind::ThumbsDown, "low information", None)
+        .record_feedback_with_context(
+            &item,
+            FeedbackKind::ThumbsDown,
+            "low information",
+            &feedback_context(),
+        )
         .expect("feedback should store");
     store
-        .record_feedback_with_context(&item, FeedbackKind::UndoThumbsDown, "", None)
+        .record_feedback_with_context(&item, FeedbackKind::UndoThumbsDown, "", &feedback_context())
         .expect("undo should store");
 
     let state = store
@@ -427,14 +441,24 @@ fn lists_x_dislikes_with_feedback_state_and_post_content() {
             &active_item,
             FeedbackKind::ThumbsDown,
             "low information",
-            None,
+            &feedback_context(),
         )
         .expect("active feedback should store");
     store
-        .record_feedback_with_context(&inactive_item, FeedbackKind::ThumbsDown, "spam", None)
+        .record_feedback_with_context(
+            &inactive_item,
+            FeedbackKind::ThumbsDown,
+            "spam",
+            &feedback_context(),
+        )
         .expect("inactive feedback should store");
     store
-        .record_feedback_with_context(&inactive_item, FeedbackKind::UndoThumbsDown, "", None)
+        .record_feedback_with_context(
+            &inactive_item,
+            FeedbackKind::UndoThumbsDown,
+            "",
+            &feedback_context(),
+        )
         .expect("undo should store");
 
     let active_page = store
@@ -779,13 +803,28 @@ fn suggests_draft_rules_from_active_feedback_reasons() {
         ))
         .expect("content should store");
     store
-        .record_feedback_with_context(&first, FeedbackKind::ThumbsDown, "engagement bait", None)
+        .record_feedback_with_context(
+            &first,
+            FeedbackKind::ThumbsDown,
+            "engagement bait",
+            &feedback_context(),
+        )
         .expect("feedback should store");
     store
-        .record_feedback_with_context(&second, FeedbackKind::ThumbsDown, "engagement bait", None)
+        .record_feedback_with_context(
+            &second,
+            FeedbackKind::ThumbsDown,
+            "engagement bait",
+            &feedback_context(),
+        )
         .expect("feedback should store");
     store
-        .record_feedback_with_context(&ignored, FeedbackKind::ThumbsDown, "spam", None)
+        .record_feedback_with_context(
+            &ignored,
+            FeedbackKind::ThumbsDown,
+            "spam",
+            &feedback_context(),
+        )
         .expect("feedback should store");
 
     let page = store

@@ -16,7 +16,7 @@ impl Store {
         item: &ContentItem,
         feedback: FeedbackKind,
         reason: &str,
-        feedback_context: Option<&FeedbackContext>,
+        feedback_context: &FeedbackContext,
     ) -> Result<bool> {
         let created_at_unix_ms = now_unix_ms();
         let Some(record) = StoredTweetFeedback::from_item(
@@ -240,7 +240,7 @@ struct StoredTweetFeedback {
     author_handle: Option<String>,
     captured_at: Option<String>,
     payload_json: String,
-    rule_context_json: Option<String>,
+    rule_context_json: String,
 }
 
 impl StoredTweetFeedback {
@@ -249,7 +249,7 @@ impl StoredTweetFeedback {
         feedback: FeedbackKind,
         reason: &str,
         created_at_unix_ms: i64,
-        feedback_context: Option<&FeedbackContext>,
+        feedback_context: &FeedbackContext,
     ) -> Result<Option<Self>> {
         let post_id = stable_post_id(item);
         let normalized_text = normalize_text(&item.text);
@@ -265,7 +265,7 @@ impl StoredTweetFeedback {
             item,
             rule_context: feedback_context,
         })?;
-        let rule_context_json = feedback_context.map(serde_json::to_string).transpose()?;
+        let rule_context_json = serde_json::to_string(feedback_context)?;
 
         Ok(Some(Self {
             storage_key,
@@ -290,25 +290,21 @@ struct StoredTweetFeedbackPayload<'a> {
     reason: &'a str,
     created_at_unix_ms: i64,
     item: &'a ContentItem,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    rule_context: Option<&'a FeedbackContext>,
+    rule_context: &'a FeedbackContext,
 }
 
 fn feedback_context_from_row(
     row: &rusqlite::Row<'_>,
     index: usize,
-) -> rusqlite::Result<Option<FeedbackContext>> {
-    let json: Option<String> = row.get(index)?;
-    json.map(|json| {
-        serde_json::from_str(&json).map_err(|error| {
-            rusqlite::Error::FromSqlConversionFailure(
-                index,
-                rusqlite::types::Type::Text,
-                Box::new(error),
-            )
-        })
+) -> rusqlite::Result<FeedbackContext> {
+    let json: String = row.get(index)?;
+    serde_json::from_str(&json).map_err(|error| {
+        rusqlite::Error::FromSqlConversionFailure(
+            index,
+            rusqlite::types::Type::Text,
+            Box::new(error),
+        )
     })
-    .transpose()
 }
 
 fn feedback_kind_name(feedback: FeedbackKind) -> &'static str {

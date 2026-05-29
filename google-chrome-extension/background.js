@@ -126,12 +126,9 @@ async function sendFeedback(message) {
     feedback,
     reason,
     page,
-    element
+    element,
+    feedbackContext: normalizeFeedbackContext(message.feedbackContext)
   };
-  const feedbackContext = objectOrNull(message.feedbackContext);
-  if (feedbackContext) {
-    body.feedbackContext = feedbackContext;
-  }
 
   const response = await postJson(settings.daemonOrigin, FEEDBACK_PATH, body);
 
@@ -330,9 +327,10 @@ function normalizeCommand(command) {
     "replaceText"
   ]);
   const target = command.target && typeof command.target === "object" ? command.target : {};
+  const normalizedAction = allowedActions.has(action) ? action : "keep";
 
   return {
-    action: allowedActions.has(action) ? action : "keep",
+    action: normalizedAction,
     target: {
       clientId: stringOrEmpty(target.clientId),
       selector: stringOrNull(target.selector),
@@ -342,7 +340,9 @@ function normalizeCommand(command) {
     text: stringOrNull(command.text),
     reason: stringOrNull(command.reason),
     confidence: Number.isFinite(command.confidence) ? command.confidence : null,
-    feedbackContext: objectOrNull(command.feedbackContext),
+    feedbackContext: normalizedAction === "insertFeedbackControl"
+      ? normalizeFeedbackContext(command.feedbackContext)
+      : objectOrNull(command.feedbackContext),
     matchedRuleIds: Array.isArray(command.matchedRuleIds)
       ? command.matchedRuleIds.map(stringOrEmpty).filter(Boolean)
       : []
@@ -351,6 +351,14 @@ function normalizeCommand(command) {
 
 function objectOrNull(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : null;
+}
+
+function normalizeFeedbackContext(value) {
+  const context = objectOrNull(value);
+  if (!context) {
+    throw new Error("Feedback context is required.");
+  }
+  return context;
 }
 
 function normalizeFeedback(value) {
