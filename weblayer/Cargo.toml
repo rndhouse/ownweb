@@ -2,7 +2,9 @@
 name = "weblayer"
 version = "0.1.0"
 edition = "2021"
+authors = ["rndhouse <rndhouse@protonmail.com>"]
 description = "Local web filtering daemon and CLI for user-controlled browsing rules."
+license = "MIT"
 readme = "README.md"
 repository = "https://github.com/rndhouse/weblayer"
 homepage = "https://rndhouse.github.io/weblayer/"
@@ -12,6 +14,7 @@ categories = ["command-line-utilities"]
 include = [
     "Cargo.lock",
     "Cargo.toml",
+    "LICENSE",
     "README.md",
     "RULES.md",
     "src/**",

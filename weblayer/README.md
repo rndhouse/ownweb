@@ -295,3 +295,7 @@ Supported command actions are `keep`, `hide`, `dim`, `insertLabel`,
 lives under `src/sites/`, and site-specific SQLite storage lives under
 `src/storage/`; the extension stays generic and only captures DOM regions and
 executes commands.
+
+## License
+
+MIT. See `LICENSE`.
