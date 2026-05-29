@@ -128,15 +128,15 @@ only after reviewing its instruction and evidence examples.
 ## CLI
 
 ```sh
-cargo run -- rules list --site x.com
-cargo run -- rules show x-ai-slop --site x.com
-cargo run -- rules create --site x.com --id x-ai-slop \
+weblayer rules list --site x.com
+weblayer rules show x-ai-slop --site x.com
+weblayer rules create --site x.com --id x-ai-slop \
   --title "AI slop" \
   --instruction "Hide generic AI engagement bait." \
   --positive-example "I asked ChatGPT to write this viral thread"
-cargo run -- rules suggest --site x.com --min-feedback 2
-cargo run -- rules validate x-ai-slop --site x.com
-cargo run -- rules enable x-ai-slop --site x.com
-cargo run -- rules disable x-ai-slop --site x.com
-cargo run -- rules archive x-ai-slop --site x.com
+weblayer rules suggest --site x.com --min-feedback 2
+weblayer rules validate x-ai-slop --site x.com
+weblayer rules enable x-ai-slop --site x.com
+weblayer rules disable x-ai-slop --site x.com
+weblayer rules archive x-ai-slop --site x.com
 ```

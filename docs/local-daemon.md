@@ -4,13 +4,13 @@ The `weblayer` binary can run the local REST and WebSocket daemon used by the
 Chrome extension.
 
 ```sh
-cargo run --manifest-path weblayer/Cargo.toml -- daemon
+weblayer daemon
 ```
 
 The daemon binds to `127.0.0.1:17891` by default. Override the bind address with:
 
 ```sh
-WEBLAYER_BIND_ADDR=127.0.0.1:19000 cargo run --manifest-path weblayer/Cargo.toml -- daemon
+WEBLAYER_BIND_ADDR=127.0.0.1:19000 weblayer daemon
 ```
 
 ## Local Data
@@ -25,13 +25,13 @@ WebLayer data directory. X.com content is stored at:
 Override the root data directory with:
 
 ```sh
-WEBLAYER_DATA_DIR=/path/to/weblayer-data cargo run --manifest-path weblayer/Cargo.toml -- daemon
+WEBLAYER_DATA_DIR=/path/to/weblayer-data weblayer daemon
 ```
 
 For development, reset the X.com database on startup with:
 
 ```sh
-WEBLAYER_X_RESET_DB=1 cargo run --manifest-path weblayer/Cargo.toml -- daemon
+WEBLAYER_X_RESET_DB=1 weblayer daemon
 ```
 
 ## Logging
@@ -42,7 +42,7 @@ Daemon output goes through structured logs on stdout. The default log level is
 Incoming posts are not logged by default. To enable captured-content log events:
 
 ```sh
-WEBLAYER_LOG_CAPTURED_CONTENT=1 cargo run --manifest-path weblayer/Cargo.toml -- daemon
+WEBLAYER_LOG_CAPTURED_CONTENT=1 weblayer daemon
 ```
 
 ## Endpoints

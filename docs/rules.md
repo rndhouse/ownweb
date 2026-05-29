@@ -36,8 +36,7 @@ explicit status change.
 Create a draft rule:
 
 ```sh
-cargo run --manifest-path weblayer/Cargo.toml -- \
-  rules create \
+weblayer rules create \
   --site x.com \
   --id x-ai-slop \
   --title "AI slop" \
@@ -48,23 +47,23 @@ cargo run --manifest-path weblayer/Cargo.toml -- \
 Inspect, test, and activate rules:
 
 ```sh
-cargo run --manifest-path weblayer/Cargo.toml -- rules list --site x.com
-cargo run --manifest-path weblayer/Cargo.toml -- rules show x-ai-slop --site x.com
-cargo run --manifest-path weblayer/Cargo.toml -- rules validate x-ai-slop --site x.com
-cargo run --manifest-path weblayer/Cargo.toml -- rules enable x-ai-slop --site x.com
+weblayer rules list --site x.com
+weblayer rules show x-ai-slop --site x.com
+weblayer rules validate x-ai-slop --site x.com
+weblayer rules enable x-ai-slop --site x.com
 ```
 
 Disable or archive a rule:
 
 ```sh
-cargo run --manifest-path weblayer/Cargo.toml -- rules disable x-ai-slop --site x.com
-cargo run --manifest-path weblayer/Cargo.toml -- rules archive x-ai-slop --site x.com
+weblayer rules disable x-ai-slop --site x.com
+weblayer rules archive x-ai-slop --site x.com
 ```
 
 Suggest draft candidates from active feedback reasons:
 
 ```sh
-cargo run --manifest-path weblayer/Cargo.toml -- rules suggest --site x.com --min-feedback 2
+weblayer rules suggest --site x.com --min-feedback 2
 ```
 
 Suggestions are review material only. They are not inserted into `content_rules`

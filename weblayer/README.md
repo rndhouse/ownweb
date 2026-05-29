@@ -5,16 +5,22 @@ act as a CLI client for a running daemon.
 
 ## Run
 
-Build output is named `weblayer`. Start the daemon with:
+Install the binary from crates.io:
 
 ```sh
-cargo run -- daemon
+cargo install weblayer
+```
+
+Start the daemon with:
+
+```sh
+weblayer daemon
 ```
 
 The daemon binds to `127.0.0.1:17891` by default. Override it with:
 
 ```sh
-WEBLAYER_BIND_ADDR=127.0.0.1:19000 cargo run -- daemon
+WEBLAYER_BIND_ADDR=127.0.0.1:19000 weblayer daemon
 ```
 
 Daemon output goes through structured logs on stdout. The default log level is
@@ -23,7 +29,7 @@ Daemon output goes through structured logs on stdout. The default log level is
 Incoming posts are not logged by default. To enable captured-content log events:
 
 ```sh
-WEBLAYER_LOG_CAPTURED_CONTENT=1 cargo run -- daemon
+WEBLAYER_LOG_CAPTURED_CONTENT=1 weblayer daemon
 ```
 
 Encountered site content is stored in per-site SQLite databases under the local
@@ -44,7 +50,7 @@ system install is required.
 For development, reset the X database on startup with:
 
 ```sh
-WEBLAYER_X_RESET_DB=1 cargo run -- daemon
+WEBLAYER_X_RESET_DB=1 weblayer daemon
 ```
 
 This removes `db.sqlite`, `db.sqlite-wal`, and `db.sqlite-shm` for `x.com`
@@ -65,7 +71,7 @@ on stdout. Repeated full captured post payloads from DOM extraction are trace
 level:
 
 ```sh
-cargo run -- daemon
+weblayer daemon
 ```
 
 ## CLI
@@ -74,25 +80,25 @@ Without `daemon`, the binary talks to a running local daemon. `weblayer` with no
 subcommand behaves like `weblayer status`.
 
 ```sh
-cargo run -- status
-cargo run -- rules list --site x.com
-cargo run -- rules show x-engagement-bait-reaction --site x.com
-cargo run -- rules create \
+weblayer status
+weblayer rules list --site x.com
+weblayer rules show x-engagement-bait-reaction --site x.com
+weblayer rules create \
   --site x.com \
   --id x-ai-slop \
   --title "AI slop" \
   --instruction "Hide generic AI engagement bait." \
   --positive-example "I asked ChatGPT to write this viral thread"
-cargo run -- rules validate x-engagement-bait-reaction --site x.com
-cargo run -- rules suggest --site x.com --min-feedback 2
-cargo run -- rules enable x-ai-slop --site x.com
-cargo run -- rules disable x-ai-slop --site x.com
-cargo run -- content list --site x.com --limit 20
-cargo run -- content search --site x.com codex
-cargo run -- content stats --site x.com
-cargo run -- feedback list --site x.com
-cargo run -- annotations list --site x.com --storage-key x:id:123
-cargo run -- annotations put \
+weblayer rules validate x-engagement-bait-reaction --site x.com
+weblayer rules suggest --site x.com --min-feedback 2
+weblayer rules enable x-ai-slop --site x.com
+weblayer rules disable x-ai-slop --site x.com
+weblayer content list --site x.com --limit 20
+weblayer content search --site x.com codex
+weblayer content stats --site x.com
+weblayer feedback list --site x.com
+weblayer annotations list --site x.com --storage-key x:id:123
+weblayer annotations put \
   --site x.com \
   --storage-key x:id:123 \
   --annotation-type tag \
@@ -113,7 +119,7 @@ WEBLAYER_CODEX_APP_WS=ws://127.0.0.1:39177
 WEBLAYER_CODEX_MODEL=gpt-5.3-codex-spark
 WEBLAYER_CODEX_EFFORT=low
 WEBLAYER_CODEX_TIMEOUT_MS=8000
-WEBLAYER_CODEX_CWD=/home/user/dev/weblayer/public
+WEBLAYER_CODEX_CWD=/path/to/project
 WEBLAYER_DATA_DIR=/home/user/.local/share/weblayer
 WEBLAYER_LOG_CAPTURED_CONTENT=0
 WEBLAYER_X_RESET_DB=0

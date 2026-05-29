@@ -1,37 +1,41 @@
 # Installation
 
-WebLayer currently runs from a source checkout.
+WebLayer's daemon and CLI are published on crates.io as the `weblayer` crate.
 
 ## Prerequisites
 
 - Rust and Cargo
 - Chrome or a Chromium-based browser that can load unpacked extensions
-- Git
+- Git, for loading the extension from the source repository
 
-## Get the Source
+## Install the Binary
+
+```sh
+cargo install weblayer
+```
+
+Start the local daemon:
+
+```sh
+weblayer daemon
+```
+
+The daemon listens on `127.0.0.1:17891` by default.
+
+In another terminal, check that the CLI can reach it:
+
+```sh
+weblayer status
+```
+
+## Load the Extension
+
+The Chrome extension is currently loaded from the source repository.
 
 ```sh
 git clone https://github.com/rndhouse/weblayer.git
 cd weblayer
 ```
-
-## Start the Daemon
-
-```sh
-cargo run --manifest-path weblayer/Cargo.toml -- daemon
-```
-
-The daemon listens on `127.0.0.1:17891` by default.
-
-## Check the CLI
-
-In another terminal, run:
-
-```sh
-cargo run --manifest-path weblayer/Cargo.toml -- status
-```
-
-## Load the Extension
 
 1. Open `chrome://extensions`.
 2. Enable Developer mode.
@@ -40,3 +44,9 @@ cargo run --manifest-path weblayer/Cargo.toml -- status
 
 After the extension is loaded, visit a supported site while the daemon is
 running.
+
+## Update the Binary
+
+```sh
+cargo install --force weblayer
+```

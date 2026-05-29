@@ -3,10 +3,8 @@
 Without the `daemon` subcommand, the `weblayer` binary talks to a running local
 daemon. Running `weblayer` with no subcommand behaves like `weblayer status`.
 
-Use Cargo from the repository root:
-
 ```sh
-cargo run --manifest-path weblayer/Cargo.toml -- status
+weblayer status
 ```
 
 ## Daemon Origin
@@ -15,35 +13,31 @@ Client commands use `http://127.0.0.1:17891` by default. Override that with
 `--daemon-origin` or `WEBLAYER_DAEMON_ORIGIN`.
 
 ```sh
-cargo run --manifest-path weblayer/Cargo.toml -- \
-  --daemon-origin http://127.0.0.1:19000 \
-  status
+weblayer --daemon-origin http://127.0.0.1:19000 status
 ```
 
 ## Content
 
 ```sh
-cargo run --manifest-path weblayer/Cargo.toml -- content list --site x.com --limit 20
-cargo run --manifest-path weblayer/Cargo.toml -- content search --site x.com codex
-cargo run --manifest-path weblayer/Cargo.toml -- content stats --site x.com
+weblayer content list --site x.com --limit 20
+weblayer content search --site x.com codex
+weblayer content stats --site x.com
 ```
 
 ## Feedback
 
 ```sh
-cargo run --manifest-path weblayer/Cargo.toml -- feedback list --site x.com
+weblayer feedback list --site x.com
 ```
 
 ## Annotations
 
 ```sh
-cargo run --manifest-path weblayer/Cargo.toml -- \
-  annotations list \
+weblayer annotations list \
   --site x.com \
   --storage-key x:id:123
 
-cargo run --manifest-path weblayer/Cargo.toml -- \
-  annotations put \
+weblayer annotations put \
   --site x.com \
   --storage-key x:id:123 \
   --annotation-type tag \
@@ -55,11 +49,11 @@ cargo run --manifest-path weblayer/Cargo.toml -- \
 ## Rules
 
 ```sh
-cargo run --manifest-path weblayer/Cargo.toml -- rules list --site x.com
-cargo run --manifest-path weblayer/Cargo.toml -- rules show x-ai-slop --site x.com
-cargo run --manifest-path weblayer/Cargo.toml -- rules suggest --site x.com --min-feedback 2
-cargo run --manifest-path weblayer/Cargo.toml -- rules validate x-ai-slop --site x.com
-cargo run --manifest-path weblayer/Cargo.toml -- rules enable x-ai-slop --site x.com
-cargo run --manifest-path weblayer/Cargo.toml -- rules disable x-ai-slop --site x.com
-cargo run --manifest-path weblayer/Cargo.toml -- rules archive x-ai-slop --site x.com
+weblayer rules list --site x.com
+weblayer rules show x-ai-slop --site x.com
+weblayer rules suggest --site x.com --min-feedback 2
+weblayer rules validate x-ai-slop --site x.com
+weblayer rules enable x-ai-slop --site x.com
+weblayer rules disable x-ai-slop --site x.com
+weblayer rules archive x-ai-slop --site x.com
 ```
