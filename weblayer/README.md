@@ -53,6 +53,8 @@ weblayer rules create \
   --instruction "Hide generic AI engagement bait." \
   --positive-example "I asked ChatGPT to write this viral thread"
 weblayer rules validate x-engagement-bait-reaction --site x.com
+weblayer rules propose --site x.com --min-feedback 2
+weblayer rules proposals --site x.com
 weblayer rules suggest --site x.com --min-feedback 2
 weblayer rules enable x-ai-slop --site x.com
 weblayer rules disable x-ai-slop --site x.com
@@ -146,6 +148,9 @@ RUST_LOG=debug
 - `POST /v1/content/annotations?site=x.com`
 - `GET /v1/content/stats?site=x.com`
 - `GET /v1/feedback?site=x.com`
+- `GET /v1/rule-proposals?site=x.com`
+- `POST /v1/rule-proposals?site=x.com`
+- `GET /v1/rule-proposals/{id}?site=x.com`
 - `GET /v1/rule-suggestions?site=x.com`
 - `GET /v1/rules?site=x.com`
 - `POST /v1/rules?site=x.com`
@@ -174,6 +179,11 @@ metadata to stored content without changing the original captured content.
 `/v1/rules` manages site-scoped filtering rules. New rules default to `draft`;
 only `active` rules are sent to the AI analyzer. Rule status values are
 `draft`, `active`, `disabled`, and `archived`.
+`/v1/rule-proposals` generates and stores reviewable rule-set change proposals
+from active feedback. Proposal generation sends active feedback, current active
+rules, and feedback-time rule snapshots to the Codex app agent when available.
+If the agent is unavailable, the daemon stores a heuristic proposal derived from
+feedback reasons so the review pipeline remains testable.
 
 Rule create request shape:
 
@@ -212,6 +222,26 @@ GET /v1/rule-suggestions?site=x.com&minFeedback=2&limit=20
 
 Suggestions are not stored and are never active automatically. Use their title,
 instruction, and examples to create an explicit draft rule after review.
+
+Rule proposals derive reviewable rule-set changes from active feedback:
+
+```http
+POST /v1/rule-proposals?site=x.com
+Content-Type: application/json
+```
+
+```json
+{
+  "minFeedback": 2,
+  "feedbackLimit": 100
+}
+```
+
+The response stores and returns a proposal with actions such as `createRule`,
+`updateRule`, `disableRule`, or `noChange`. Proposals are not applied
+automatically; review them through `GET /v1/rule-proposals` or
+`GET /v1/rule-proposals/{id}` before using the regular rule management commands
+to make changes.
 
 Content annotation request shape:
 

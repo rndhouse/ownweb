@@ -1,5 +1,8 @@
 use super::{AiAction, AiContentRule, AiOpinion};
-use crate::core::ContentItem;
+use crate::{
+    core::ContentItem,
+    storage::{ContentRule, RuleSetProposalChange, XDislikedPost},
+};
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -69,11 +72,58 @@ impl CodexAppAnalyzer {
         }
     }
 
+    /// Gets proposed X rule-set changes from feedback and current active rules.
+    pub async fn x_rule_set_proposal(
+        &self,
+        feedback: &[XDislikedPost],
+        active_rules: &[ContentRule],
+    ) -> Result<Vec<RuleSetProposalChange>, CodexAppError> {
+        let prompt_feedback = prompt_feedback(feedback);
+        let prompt_rules = prompt_rule_set_rules(active_rules);
+
+        match timeout(
+            self.config.request_timeout,
+            self.run_x_rule_set_proposal_turn(prompt_feedback, prompt_rules),
+        )
+        .await
+        {
+            Ok(Ok(changes)) => Ok(changes),
+            Ok(Err(error)) => {
+                self.reset_session().await;
+                Err(error)
+            }
+            Err(_elapsed) => {
+                self.reset_session().await;
+                Err(CodexAppError::Timeout)
+            }
+        }
+    }
+
     async fn run_x_opinion_turn(
         &self,
         prompt_items: Vec<PromptItem>,
         prompt_rules: Vec<PromptRule>,
     ) -> Result<Vec<AiOpinion>, CodexAppError> {
+        let prompt = build_prompt(&prompt_items, &prompt_rules)?;
+        let schema = output_schema();
+        let final_text = self.run_turn(prompt, schema).await?;
+
+        parse_opinions(&final_text)
+    }
+
+    async fn run_x_rule_set_proposal_turn(
+        &self,
+        feedback: Vec<PromptFeedback>,
+        active_rules: Vec<PromptRuleSetRule>,
+    ) -> Result<Vec<RuleSetProposalChange>, CodexAppError> {
+        let prompt = build_rule_set_proposal_prompt(&feedback, &active_rules)?;
+        let schema = rule_set_proposal_output_schema();
+        let final_text = self.run_turn(prompt, schema).await?;
+
+        parse_rule_set_proposal(&final_text)
+    }
+
+    async fn run_turn(&self, prompt: String, schema: Value) -> Result<String, CodexAppError> {
         let mut state = self.state.lock().await;
         self.check_child_status(&mut state).await?;
         self.ensure_session_started(&mut state).await?;
@@ -87,7 +137,7 @@ impl CodexAppAnalyzer {
             .as_mut()
             .ok_or_else(|| CodexAppError::Protocol("missing Codex app-server session".into()))?;
         let result = session
-            .start_turn(&self.config, &thread_id, prompt_items, prompt_rules)
+            .start_turn(&self.config, &thread_id, prompt, schema)
             .await;
 
         if result.is_err() {
@@ -271,8 +321,8 @@ impl CodexAppSession {
                     "sandbox": "read-only",
                     "model": config.model,
                     "serviceTier": null,
-                    "baseInstructions": "You evaluate X/Twitter posts for WebLayer using user-defined rules. Return only the requested JSON.",
-                    "developerInstructions": "Return concise valid JSON. Do not use tools. Do not run commands. Use only keep or hide actions. Keep each opinion under 120 characters.",
+                    "baseInstructions": "You support WebLayer by evaluating X/Twitter content and curating user-defined filtering rules. Return only the requested JSON.",
+                    "developerInstructions": "Return concise valid JSON matching the provided schema. Do not use tools. Do not run commands. Follow the task instructions exactly.",
                     "ephemeral": true,
                     "experimentalRawEvents": false,
                     "persistExtendedHistory": false
@@ -293,11 +343,9 @@ impl CodexAppSession {
         &mut self,
         config: &CodexAppConfig,
         thread_id: &str,
-        items: Vec<PromptItem>,
-        rules: Vec<PromptRule>,
-    ) -> Result<Vec<AiOpinion>, CodexAppError> {
-        let prompt = build_prompt(&items, &rules)?;
-        let schema = output_schema();
+        prompt: String,
+        schema: Value,
+    ) -> Result<String, CodexAppError> {
         let result = self
             .request(
                 "turn/start",
@@ -332,7 +380,7 @@ impl CodexAppSession {
             .ok_or_else(|| CodexAppError::Protocol("turn/start response missing turn.id".into()))?;
 
         let final_text = self.read_turn_output(thread_id, &turn_id).await?;
-        parse_opinions(&final_text)
+        Ok(final_text)
     }
 
     async fn request(&mut self, method: &str, params: Value) -> Result<Value, CodexAppError> {
@@ -458,6 +506,43 @@ struct PromptRule {
     negative_examples: Vec<String>,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PromptRuleSetRule {
+    id: String,
+    status: String,
+    priority: i64,
+    title: String,
+    instruction: String,
+    positive_examples: Vec<String>,
+    negative_examples: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PromptFeedback {
+    storage_key: String,
+    post_id: Option<String>,
+    url: Option<String>,
+    author: Option<String>,
+    text: String,
+    reason: String,
+    rules_at_feedback: Vec<PromptFeedbackRule>,
+    decision_action_at_feedback: Option<String>,
+    matched_rule_ids_at_feedback: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PromptFeedbackRule {
+    id: String,
+    priority: i64,
+    title: String,
+    instruction: String,
+    positive_examples: Vec<String>,
+    negative_examples: Vec<String>,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct OpinionResponse {
@@ -479,6 +564,12 @@ struct OpinionItem {
 enum OpinionAction {
     Keep,
     Hide,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RuleSetProposalResponse {
+    changes: Vec<RuleSetProposalChange>,
 }
 
 fn prompt_items(items: &[ContentItem]) -> Vec<PromptItem> {
@@ -514,11 +605,71 @@ fn prompt_rules(rules: &[AiContentRule]) -> Vec<PromptRule> {
         .collect()
 }
 
+fn prompt_rule_set_rules(rules: &[ContentRule]) -> Vec<PromptRuleSetRule> {
+    rules
+        .iter()
+        .map(|rule| PromptRuleSetRule {
+            id: rule.id.clone(),
+            status: rule.status.clone(),
+            priority: rule.priority,
+            title: rule.title.clone(),
+            instruction: rule.instruction.clone(),
+            positive_examples: rule.examples.positive.clone(),
+            negative_examples: rule.examples.negative.clone(),
+        })
+        .collect()
+}
+
+fn prompt_feedback(feedback: &[XDislikedPost]) -> Vec<PromptFeedback> {
+    feedback
+        .iter()
+        .map(|item| {
+            let decision = item.rule_context.decision.as_ref();
+            PromptFeedback {
+                storage_key: item.storage_key.clone(),
+                post_id: item.post_id.clone(),
+                url: item.url.clone(),
+                author: item.author.clone(),
+                text: item.text.clone(),
+                reason: item.reason.clone(),
+                rules_at_feedback: item
+                    .rule_context
+                    .active_rules
+                    .iter()
+                    .map(|rule| PromptFeedbackRule {
+                        id: rule.id.clone(),
+                        priority: rule.priority,
+                        title: rule.title.clone(),
+                        instruction: rule.instruction.clone(),
+                        positive_examples: rule.positive_examples.clone(),
+                        negative_examples: rule.negative_examples.clone(),
+                    })
+                    .collect(),
+                decision_action_at_feedback: decision.map(|decision| decision.action.clone()),
+                matched_rule_ids_at_feedback: decision
+                    .map(|decision| decision.matched_rule_ids.clone())
+                    .unwrap_or_default(),
+            }
+        })
+        .collect()
+}
+
 fn build_prompt(items: &[PromptItem], rules: &[PromptRule]) -> Result<String, CodexAppError> {
     let items_json = serde_json::to_string(items)?;
     let rules_json = serde_json::to_string(rules)?;
     Ok(format!(
         "Evaluate each X post against the active user rules. Active rules JSON: {rules_json}\nPosts JSON: {items_json}\nReturn one opinion for every clientId. The only valid actions are \"keep\" and \"hide\". Use \"hide\" only when the post clearly matches one or more active rules; include those rule IDs in matchedRuleIds. Use \"keep\" when no active rule clearly matches, and return an empty matchedRuleIds array. Do not dim, label, or replace content. Keep opinion under 120 characters and explain the decision in plain language. Return only JSON matching the schema."
+    ))
+}
+
+fn build_rule_set_proposal_prompt(
+    feedback: &[PromptFeedback],
+    active_rules: &[PromptRuleSetRule],
+) -> Result<String, CodexAppError> {
+    let feedback_json = serde_json::to_string(feedback)?;
+    let active_rules_json = serde_json::to_string(active_rules)?;
+    Ok(format!(
+        "Create a reviewable rule-set proposal for WebLayer X filtering. Current active rules JSON: {active_rules_json}\nActive user feedback JSON: {feedback_json}\nReconcile the feedback with the current active rules. Use the feedback-time rulesAtFeedback and matchedRuleIds to distinguish uncovered feedback from feedback that already had a rule in play. Avoid duplicate rules and avoid broad overlapping rules. Prefer updateRule when feedback is clearly evidence for an existing active rule. Use createRule only for a coherent uncovered theme, and set status to \"draft\". Use disableRule only when an active rule is redundant with another active rule or clearly obsolete. Use noChange when feedback is too sparse or already covered. For updateRule, include the existing ruleId and only fields that should change; include positive examples when feedback should become rule evidence. For disableRule, include the existing ruleId and status \"disabled\". Put feedback storage keys in evidenceStorageKeys. Keep rationales under 160 characters. Return only JSON matching the schema."
     ))
 }
 
@@ -550,6 +701,68 @@ fn output_schema() -> Value {
     })
 }
 
+fn rule_set_proposal_output_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "changes": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                        "action": {
+                            "type": "string",
+                            "enum": ["createRule", "updateRule", "disableRule", "noChange"]
+                        },
+                        "ruleId": { "type": ["string", "null"] },
+                        "status": {
+                            "type": ["string", "null"],
+                            "enum": ["draft", "active", "disabled", "archived", null]
+                        },
+                        "priority": { "type": ["integer", "null"] },
+                        "title": { "type": ["string", "null"] },
+                        "instruction": { "type": ["string", "null"] },
+                        "rationale": { "type": "string" },
+                        "evidenceStorageKeys": {
+                            "type": "array",
+                            "items": { "type": "string" }
+                        },
+                        "examples": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "properties": {
+                                "positive": {
+                                    "type": "array",
+                                    "items": { "type": "string" }
+                                },
+                                "negative": {
+                                    "type": "array",
+                                    "items": { "type": "string" }
+                                }
+                            },
+                            "required": ["positive", "negative"]
+                        }
+                    },
+                    "required": [
+                        "action",
+                        "ruleId",
+                        "status",
+                        "priority",
+                        "title",
+                        "instruction",
+                        "rationale",
+                        "evidenceStorageKeys",
+                        "examples"
+                    ]
+                }
+            }
+        },
+        "required": ["changes"]
+    })
+}
+
 fn parse_opinions(text: &str) -> Result<Vec<AiOpinion>, CodexAppError> {
     let parsed: OpinionResponse = serde_json::from_str(text.trim())?;
     Ok(parsed
@@ -566,6 +779,11 @@ fn parse_opinions(text: &str) -> Result<Vec<AiOpinion>, CodexAppError> {
             matched_rule_ids: opinion.matched_rule_ids,
         })
         .collect())
+}
+
+fn parse_rule_set_proposal(text: &str) -> Result<Vec<RuleSetProposalChange>, CodexAppError> {
+    let parsed: RuleSetProposalResponse = serde_json::from_str(text.trim())?;
+    Ok(parsed.changes)
 }
 
 /// Error returned by the Codex app-server adapter.
@@ -672,5 +890,77 @@ mod tests {
             opinions[0].matched_rule_ids,
             vec!["x-engagement-bait-reaction"]
         );
+    }
+
+    #[test]
+    fn rule_set_proposal_prompt_includes_feedback_context() {
+        let feedback = vec![PromptFeedback {
+            storage_key: "x:id:123".into(),
+            post_id: Some("123".into()),
+            url: Some("https://x.com/alice/status/123".into()),
+            author: Some("@alice".into()),
+            text: "reply yes if you agree".into(),
+            reason: "engagement bait".into(),
+            rules_at_feedback: vec![PromptFeedbackRule {
+                id: "x-engagement-bait-reaction".into(),
+                priority: 50,
+                title: "Engagement bait reaction posts".into(),
+                instruction: "Downrank engagement bait reaction posts.".into(),
+                positive_examples: Vec::new(),
+                negative_examples: Vec::new(),
+            }],
+            decision_action_at_feedback: Some("keep".into()),
+            matched_rule_ids_at_feedback: Vec::new(),
+        }];
+        let active_rules = vec![PromptRuleSetRule {
+            id: "x-engagement-bait-reaction".into(),
+            status: "active".into(),
+            priority: 50,
+            title: "Engagement bait reaction posts".into(),
+            instruction: "Downrank engagement bait reaction posts.".into(),
+            positive_examples: Vec::new(),
+            negative_examples: Vec::new(),
+        }];
+
+        let prompt =
+            build_rule_set_proposal_prompt(&feedback, &active_rules).expect("prompt should build");
+
+        assert!(prompt.contains("Current active rules JSON"));
+        assert!(prompt.contains("rulesAtFeedback"));
+        assert!(prompt.contains("matchedRuleIds"));
+        assert!(prompt.contains("reply yes if you agree"));
+        assert!(prompt.contains("Prefer updateRule"));
+    }
+
+    #[test]
+    fn parse_rule_set_proposal_reads_update_changes() {
+        let changes = parse_rule_set_proposal(
+            r#"{
+                "changes": [
+                    {
+                        "action": "updateRule",
+                        "ruleId": "x-engagement-bait-reaction",
+                        "status": "active",
+                        "priority": 50,
+                        "title": "Engagement bait reaction posts",
+                        "instruction": "Hide engagement bait reaction posts.",
+                        "rationale": "Feedback is best handled by tightening the existing rule.",
+                        "evidenceStorageKeys": ["x:id:123"],
+                        "examples": {
+                            "positive": ["reply yes if you agree"],
+                            "negative": []
+                        }
+                    }
+                ]
+            }"#,
+        )
+        .expect("proposal json should parse");
+
+        assert_eq!(changes.len(), 1);
+        assert_eq!(
+            changes[0].rule_id.as_deref(),
+            Some("x-engagement-bait-reaction")
+        );
+        assert_eq!(changes[0].examples.positive, vec!["reply yes if you agree"]);
     }
 }

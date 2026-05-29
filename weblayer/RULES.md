@@ -132,6 +132,33 @@ Suggestions are review material only. They are not inserted into
 `content_rules`, and they are not active. Create a draft rule from a suggestion
 only after reviewing its instruction and evidence examples.
 
+Generate and store a reviewable rule-set proposal from active feedback:
+
+```http
+POST http://127.0.0.1:17891/v1/rule-proposals?site=x.com
+Content-Type: application/json
+```
+
+```json
+{
+  "minFeedback": 2,
+  "feedbackLimit": 100
+}
+```
+
+Rule proposals use the Codex app agent when available. The prompt includes
+current active rules, active feedback, and the rule snapshots that were in play
+when each feedback event was recorded. The proposal can contain `createRule`,
+`updateRule`, `disableRule`, and `noChange` actions. Proposals are stored for
+review and are not applied automatically.
+
+Inspect stored proposals:
+
+```http
+GET http://127.0.0.1:17891/v1/rule-proposals?site=x.com
+GET http://127.0.0.1:17891/v1/rule-proposals/x-rule-proposal-123?site=x.com
+```
+
 ## CLI
 
 ```sh
@@ -141,6 +168,9 @@ weblayer rules create --site x.com --id x-ai-slop \
   --title "AI slop" \
   --instruction "Hide generic AI engagement bait." \
   --positive-example "I asked ChatGPT to write this viral thread"
+weblayer rules propose --site x.com --min-feedback 2
+weblayer rules proposals --site x.com
+weblayer rules proposal x-rule-proposal-123 --site x.com
 weblayer rules suggest --site x.com --min-feedback 2
 weblayer rules validate x-ai-slop --site x.com
 weblayer rules enable x-ai-slop --site x.com

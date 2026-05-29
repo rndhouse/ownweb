@@ -7,8 +7,9 @@ use crate::{
     core::{AnalysisBatch, ContentItem, FeedbackContext, FeedbackKind, FeedbackRuleContext},
     storage::{
         ContentAnnotationInput, ContentAnnotationQuery, ContentQuery, RuleCreateInput,
-        RuleExamples, RuleQuery, RuleStatusInput, RuleSuggestionQuery, RuleUpdateInput,
-        RuleValidationQuery, XDislikeQuery,
+        RuleExamples, RuleQuery, RuleSetProposalAction, RuleSetProposalChange,
+        RuleSetProposalCreateInput, RuleSetProposalQuery, RuleStatusInput, RuleSuggestionQuery,
+        RuleUpdateInput, RuleValidationQuery, XDislikeQuery,
     },
 };
 use serde_json::{json, Value};
@@ -849,6 +850,56 @@ fn suggests_draft_rules_from_active_feedback_reasons() {
     assert_eq!(page.items[0].feedback_count, 2);
     assert_eq!(page.items[0].reasons, vec!["engagement bait".to_string()]);
     assert_eq!(page.items[0].examples.positive.len(), 2);
+
+    let _ = std::fs::remove_dir_all(db_path.parent().unwrap().parent().unwrap());
+}
+
+#[test]
+fn stores_rule_set_proposals_for_review() {
+    let db_path = temp_db_path("stores-rule-proposal");
+    let mut store = Store::open(&db_path).expect("store should open");
+
+    let proposal = store
+        .create_rule_set_proposal(RuleSetProposalCreateInput {
+            source: "agent:test".into(),
+            feedback_count: 2,
+            active_rule_count: 1,
+            changes: vec![RuleSetProposalChange {
+                action: RuleSetProposalAction::CreateRule,
+                rule_id: Some("x-feedback-engagement".into()),
+                status: Some("draft".into()),
+                priority: Some(100),
+                title: Some("Engagement bait".into()),
+                instruction: Some("Hide engagement bait posts.".into()),
+                rationale: "Two feedback examples share the same theme.".into(),
+                evidence_storage_keys: vec!["x:id:123".into(), "x:id:123".into()],
+                examples: RuleExamples {
+                    positive: vec!["reply yes if you agree".into()],
+                    negative: Vec::new(),
+                },
+            }],
+        })
+        .expect("proposal should store");
+
+    let loaded = store
+        .rule_set_proposal(&proposal.id)
+        .expect("proposal should load")
+        .expect("proposal should exist");
+    let page = store
+        .rule_set_proposals(RuleSetProposalQuery {
+            status: Some("pending".into()),
+            limit: 10,
+            offset: 0,
+        })
+        .expect("proposals should list");
+
+    assert_eq!(loaded.id, proposal.id);
+    assert_eq!(loaded.status, "pending");
+    assert_eq!(loaded.source, "agent:test");
+    assert_eq!(loaded.changes[0].action, RuleSetProposalAction::CreateRule);
+    assert_eq!(loaded.changes[0].evidence_storage_keys, vec!["x:id:123"]);
+    assert_eq!(page.total_matching, 1);
+    assert_eq!(page.items[0].id, proposal.id);
 
     let _ = std::fs::remove_dir_all(db_path.parent().unwrap().parent().unwrap());
 }

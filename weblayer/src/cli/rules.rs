@@ -1,8 +1,8 @@
 use super::{
     client::{push_optional_query, DaemonClient},
     output::{
-        print_json, print_rule_detail, print_rule_saved, print_rule_suggestions,
-        print_rule_validation, print_rules,
+        print_json, print_rule_detail, print_rule_saved, print_rule_set_proposal,
+        print_rule_set_proposals, print_rule_suggestions, print_rule_validation, print_rules,
     },
     CliResult, DEFAULT_SITE,
 };
@@ -35,6 +35,12 @@ enum RulesSubcommand {
     Reorder(RulesReorderArgs),
     /// Test a rule against stored content.
     Validate(RulesValidateArgs),
+    /// Generate and store a rule-set proposal from active feedback.
+    Propose(RulesProposeArgs),
+    /// List stored rule-set proposals.
+    Proposals(RulesProposalsArgs),
+    /// Show one stored rule-set proposal.
+    Proposal(RulesProposalArgs),
     /// Suggest draft rules from active feedback.
     Suggest(RulesSuggestArgs),
 }
@@ -194,6 +200,53 @@ struct RulesValidateArgs {
 }
 
 #[derive(Debug, Clone, Args)]
+struct RulesProposeArgs {
+    /// Site scope to inspect.
+    #[arg(long, default_value = DEFAULT_SITE)]
+    site: String,
+    /// Minimum active feedback examples required before proposing changes.
+    #[arg(long, default_value_t = 1)]
+    min_feedback: usize,
+    /// Maximum active feedback rows to consider.
+    #[arg(long, default_value_t = 100)]
+    feedback_limit: usize,
+    /// Print the raw daemon JSON response.
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, Clone, Args)]
+struct RulesProposalsArgs {
+    /// Site scope to inspect.
+    #[arg(long, default_value = DEFAULT_SITE)]
+    site: String,
+    /// Optional proposal status filter.
+    #[arg(long)]
+    status: Option<String>,
+    /// Maximum rows to return.
+    #[arg(long, default_value_t = 20)]
+    limit: usize,
+    /// Number of matching rows to skip.
+    #[arg(long, default_value_t = 0)]
+    offset: usize,
+    /// Print the raw daemon JSON response.
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, Clone, Args)]
+struct RulesProposalArgs {
+    /// Stable proposal ID.
+    id: String,
+    /// Site scope to inspect.
+    #[arg(long, default_value = DEFAULT_SITE)]
+    site: String,
+    /// Print the raw daemon JSON response.
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, Clone, Args)]
 struct RulesSuggestArgs {
     /// Site scope to inspect.
     #[arg(long, default_value = DEFAULT_SITE)]
@@ -237,6 +290,9 @@ pub(super) async fn run_rules(client: &DaemonClient, command: RulesCommand) -> C
         }
         RulesSubcommand::Reorder(args) => run_rules_reorder(client, args).await?,
         RulesSubcommand::Validate(args) => run_rules_validate(client, args).await?,
+        RulesSubcommand::Propose(args) => run_rules_propose(client, args).await?,
+        RulesSubcommand::Proposals(args) => run_rules_proposals(client, args).await?,
+        RulesSubcommand::Proposal(args) => run_rules_proposal(client, args).await?,
         RulesSubcommand::Suggest(args) => run_rules_suggest(client, args).await?,
     }
 
@@ -410,6 +466,56 @@ async fn run_rules_validate(client: &DaemonClient, args: RulesValidateArgs) -> C
         print_json(&value)?;
     } else {
         print_rule_validation(&value);
+    }
+
+    Ok(())
+}
+
+async fn run_rules_propose(client: &DaemonClient, args: RulesProposeArgs) -> CliResult<()> {
+    let body = json!({
+        "minFeedback": args.min_feedback,
+        "feedbackLimit": args.feedback_limit
+    });
+    let value = client
+        .post_json("/v1/rule-proposals", &[("site", args.site)], body)
+        .await?;
+    if args.json {
+        print_json(&value)?;
+    } else {
+        print_rule_set_proposal(&value);
+    }
+
+    Ok(())
+}
+
+async fn run_rules_proposals(client: &DaemonClient, args: RulesProposalsArgs) -> CliResult<()> {
+    let mut query = vec![
+        ("site", args.site),
+        ("limit", args.limit.to_string()),
+        ("offset", args.offset.to_string()),
+    ];
+    push_optional_query(&mut query, "status", args.status);
+    let value = client.get_json("/v1/rule-proposals", &query).await?;
+    if args.json {
+        print_json(&value)?;
+    } else {
+        print_rule_set_proposals(&value);
+    }
+
+    Ok(())
+}
+
+async fn run_rules_proposal(client: &DaemonClient, args: RulesProposalArgs) -> CliResult<()> {
+    let value = client
+        .get_json(
+            &format!("/v1/rule-proposals/{}", args.id),
+            &[("site", args.site)],
+        )
+        .await?;
+    if args.json {
+        print_json(&value)?;
+    } else {
+        print_rule_set_proposal(&value);
     }
 
     Ok(())

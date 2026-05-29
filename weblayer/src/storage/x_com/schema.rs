@@ -109,6 +109,18 @@ pub(super) fn initialize(connection: &Connection) -> Result<()> {
     CREATE INDEX IF NOT EXISTS content_rule_events_rule_time_idx
         ON content_rule_events(rule_id, created_at_unix_ms);
 
+    CREATE TABLE IF NOT EXISTS rule_set_proposals (
+        id TEXT PRIMARY KEY,
+        site TEXT NOT NULL,
+        status TEXT NOT NULL,
+        source TEXT NOT NULL,
+        created_at_unix_ms INTEGER NOT NULL,
+        proposal_json TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS rule_set_proposals_status_time_idx
+        ON rule_set_proposals(status, created_at_unix_ms);
+
     CREATE TABLE IF NOT EXISTS content_annotations (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         storage_key TEXT NOT NULL,

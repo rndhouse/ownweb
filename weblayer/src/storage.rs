@@ -1,7 +1,7 @@
 mod x_com;
 
 use crate::core::{AnalysisBatch, ContentItem, FeedbackContext, FeedbackKind};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{
     fmt,
@@ -496,6 +496,111 @@ pub struct RuleSuggestion {
     pub evidence: Vec<XDislikedPost>,
 }
 
+/// Query options for stored rule-set proposals.
+#[derive(Debug, Clone)]
+pub struct RuleSetProposalQuery {
+    /// Optional proposal lifecycle status filter such as `pending` or `applied`.
+    pub status: Option<String>,
+    /// Maximum number of proposals to return.
+    pub limit: usize,
+    /// Number of matching proposals to skip.
+    pub offset: usize,
+}
+
+/// Page of stored rule-set proposals.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RuleSetProposalPage {
+    /// Number of matching proposals before pagination.
+    pub total_matching: usize,
+    /// Maximum number of proposals requested.
+    pub limit: usize,
+    /// Number of matching proposals skipped.
+    pub offset: usize,
+    /// Matching proposals.
+    pub items: Vec<RuleSetProposal>,
+}
+
+/// Stored proposal for changing a site's content rule set.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RuleSetProposal {
+    /// Stable proposal ID.
+    pub id: String,
+    /// Site scope for the proposal.
+    pub site: String,
+    /// Proposal lifecycle status such as `pending` or `applied`.
+    pub status: String,
+    /// Source that generated the proposal.
+    pub source: String,
+    /// Proposal creation timestamp.
+    pub created_at_unix_ms: i64,
+    /// Number of active feedback rows considered.
+    pub feedback_count: usize,
+    /// Number of active rules considered.
+    pub active_rule_count: usize,
+    /// Proposed changes to reconcile the rule set with feedback.
+    pub changes: Vec<RuleSetProposalChange>,
+}
+
+/// Input for storing one generated rule-set proposal.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuleSetProposalCreateInput {
+    /// Source that generated the proposal.
+    pub source: String,
+    /// Number of active feedback rows considered.
+    pub feedback_count: usize,
+    /// Number of active rules considered.
+    pub active_rule_count: usize,
+    /// Proposed changes to store.
+    pub changes: Vec<RuleSetProposalChange>,
+}
+
+/// One proposed rule-set change.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RuleSetProposalChange {
+    /// Change action to apply after user review.
+    pub action: RuleSetProposalAction,
+    /// Existing or proposed stable rule ID.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rule_id: Option<String>,
+    /// Proposed lifecycle status.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+    /// Proposed priority.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub priority: Option<i64>,
+    /// Proposed rule title.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    /// Proposed agent-facing instruction.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub instruction: Option<String>,
+    /// Short explanation of why this change is proposed.
+    pub rationale: String,
+    /// Feedback storage keys used as evidence.
+    #[serde(default)]
+    pub evidence_storage_keys: Vec<String>,
+    /// Proposed examples for create or update actions.
+    #[serde(default)]
+    pub examples: RuleExamples,
+}
+
+/// Supported rule-set proposal actions.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum RuleSetProposalAction {
+    /// Create a new draft rule.
+    CreateRule,
+    /// Update an existing rule.
+    UpdateRule,
+    /// Disable an existing overlapping or obsolete rule.
+    DisableRule,
+    /// Record that no rule change is currently justified.
+    NoChange,
+}
+
 impl ContentStore {
     /// Opens the per-site storage databases under the configured data directory.
     pub fn from_env() -> Result<Self> {
@@ -647,6 +752,36 @@ impl ContentStore {
             .lock()
             .expect("X storage mutex should not be poisoned");
         db.rule_suggestions(query)
+    }
+
+    /// Stores a generated X/Twitter rule-set proposal.
+    pub fn x_create_rule_set_proposal(
+        &self,
+        input: RuleSetProposalCreateInput,
+    ) -> Result<RuleSetProposal> {
+        let mut db = self
+            .x_com
+            .lock()
+            .expect("X storage mutex should not be poisoned");
+        db.create_rule_set_proposal(input)
+    }
+
+    /// Lists stored X/Twitter rule-set proposals.
+    pub fn x_rule_set_proposals(&self, query: RuleSetProposalQuery) -> Result<RuleSetProposalPage> {
+        let db = self
+            .x_com
+            .lock()
+            .expect("X storage mutex should not be poisoned");
+        db.rule_set_proposals(query)
+    }
+
+    /// Loads one stored X/Twitter rule-set proposal.
+    pub fn x_rule_set_proposal(&self, id: &str) -> Result<Option<RuleSetProposal>> {
+        let db = self
+            .x_com
+            .lock()
+            .expect("X storage mutex should not be poisoned");
+        db.rule_set_proposal(id)
     }
 
     /// Returns aggregate counts for stored X/Twitter content.

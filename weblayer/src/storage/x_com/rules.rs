@@ -5,9 +5,10 @@ use super::{
 };
 use crate::storage::{
     ContentRule, RuleAuditEvent, RuleCreateInput, RuleDetail, RuleExamples, RulePage, RuleQuery,
-    RuleStatusInput, RuleSuggestion, RuleSuggestionPage, RuleSuggestionQuery, RuleUpdateInput,
-    RuleValidationMatch, RuleValidationPage, RuleValidationQuery, StoredContentItem, XDislikeQuery,
-    XDislikedPost,
+    RuleSetProposal, RuleSetProposalAction, RuleSetProposalChange, RuleSetProposalCreateInput,
+    RuleSetProposalPage, RuleSetProposalQuery, RuleStatusInput, RuleSuggestion, RuleSuggestionPage,
+    RuleSuggestionQuery, RuleUpdateInput, RuleValidationMatch, RuleValidationPage,
+    RuleValidationQuery, StoredContentItem, XDislikeQuery, XDislikedPost,
 };
 use rusqlite::{params, Connection, OptionalExtension, Row};
 use std::collections::BTreeMap;
@@ -349,6 +350,118 @@ impl Store {
         })
     }
 
+    pub(in crate::storage) fn create_rule_set_proposal(
+        &mut self,
+        input: RuleSetProposalCreateInput,
+    ) -> Result<RuleSetProposal> {
+        let now = now_unix_ms();
+        let source = required_clean_text(&input.source, "source")?;
+        let changes = clean_rule_set_proposal_changes(input.changes)?;
+        let changes_json = serde_json::to_string(&changes)?;
+        let id = generated_rule_set_proposal_id(
+            &source,
+            input.feedback_count,
+            input.active_rule_count,
+            &changes_json,
+            now,
+        );
+        let proposal = RuleSetProposal {
+            id,
+            site: SITE_DIR.into(),
+            status: "pending".into(),
+            source,
+            created_at_unix_ms: now,
+            feedback_count: input.feedback_count,
+            active_rule_count: input.active_rule_count,
+            changes,
+        };
+        let proposal_json = serde_json::to_string(&proposal)?;
+
+        self.connection.execute(
+            "
+            INSERT INTO rule_set_proposals (
+                id,
+                site,
+                status,
+                source,
+                created_at_unix_ms,
+                proposal_json
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            ",
+            params![
+                proposal.id.as_str(),
+                proposal.site.as_str(),
+                proposal.status.as_str(),
+                proposal.source.as_str(),
+                proposal.created_at_unix_ms,
+                proposal_json,
+            ],
+        )?;
+
+        Ok(proposal)
+    }
+
+    pub(in crate::storage) fn rule_set_proposals(
+        &self,
+        query: RuleSetProposalQuery,
+    ) -> Result<RuleSetProposalPage> {
+        let status = query
+            .status
+            .as_deref()
+            .map(clean_rule_set_proposal_status)
+            .transpose()?;
+        let limit = sqlite_limit(query.limit);
+        let offset = sqlite_limit(query.offset);
+        let total_matching = self.connection.query_row(
+            "
+            SELECT COUNT(*)
+            FROM rule_set_proposals
+            WHERE (?1 IS NULL OR status = ?1)
+            ",
+            [status.as_deref()],
+            |row| row.get::<_, i64>(0),
+        )?;
+
+        let mut statement = self.connection.prepare(
+            "
+            SELECT
+                id,
+                site,
+                status,
+                source,
+                created_at_unix_ms,
+                proposal_json
+            FROM rule_set_proposals
+            WHERE (?1 IS NULL OR status = ?1)
+            ORDER BY created_at_unix_ms DESC, id DESC
+            LIMIT ?2 OFFSET ?3
+            ",
+        )?;
+        let items = statement
+            .query_map(params![status.as_deref(), limit, offset], |row| {
+                rule_set_proposal_from_row(row)
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+
+        Ok(RuleSetProposalPage {
+            total_matching: total_matching.max(0) as usize,
+            limit: limit as usize,
+            offset: offset as usize,
+            items,
+        })
+    }
+
+    pub(in crate::storage) fn rule_set_proposal(
+        &self,
+        id: &str,
+    ) -> Result<Option<RuleSetProposal>> {
+        let Some(id) = clean_rule_id_for_lookup(id) else {
+            return Ok(None);
+        };
+
+        load_rule_set_proposal(&self.connection, &id)
+    }
+
     fn rule(&self, id: &str) -> Result<Option<ContentRule>> {
         load_rule(&self.connection, id)
     }
@@ -527,6 +640,42 @@ fn rule_audit_event_from_row(row: &Row<'_>) -> rusqlite::Result<RuleAuditEvent> 
         snapshot,
     })
 }
+
+fn rule_set_proposal_from_row(row: &Row<'_>) -> rusqlite::Result<RuleSetProposal> {
+    let proposal_json: String = row.get(5)?;
+    let mut proposal: RuleSetProposal = serde_json::from_str(&proposal_json).map_err(|error| {
+        rusqlite::Error::FromSqlConversionFailure(5, rusqlite::types::Type::Text, Box::new(error))
+    })?;
+
+    proposal.id = row.get(0)?;
+    proposal.site = row.get(1)?;
+    proposal.status = row.get(2)?;
+    proposal.source = row.get(3)?;
+    proposal.created_at_unix_ms = row.get(4)?;
+
+    Ok(proposal)
+}
+
+fn load_rule_set_proposal(connection: &Connection, id: &str) -> Result<Option<RuleSetProposal>> {
+    Ok(connection
+        .query_row(
+            "
+            SELECT
+                id,
+                site,
+                status,
+                source,
+                created_at_unix_ms,
+                proposal_json
+            FROM rule_set_proposals
+            WHERE id = ?1
+            ",
+            [id],
+            rule_set_proposal_from_row,
+        )
+        .optional()?)
+}
+
 fn required_clean_text(value: &str, field: &str) -> Result<String> {
     clean_optional(Some(value))
         .ok_or_else(|| StorageError::InvalidInput(format!("{field} must not be empty")))
@@ -561,6 +710,16 @@ fn clean_rule_status(value: &str) -> Result<String> {
     }
 }
 
+fn clean_rule_set_proposal_status(value: &str) -> Result<String> {
+    let status = required_clean_text(value, "status")?.to_ascii_lowercase();
+    match status.as_str() {
+        "pending" | "applied" | "dismissed" => Ok(status),
+        _ => Err(StorageError::InvalidInput(format!(
+            "unsupported rule-set proposal status: {status}"
+        ))),
+    }
+}
+
 fn clean_examples(examples: RuleExamples) -> RuleExamples {
     RuleExamples {
         positive: clean_example_list(examples.positive),
@@ -581,10 +740,113 @@ fn clean_example_list(examples: Vec<String>) -> Vec<String> {
     cleaned
 }
 
+fn clean_rule_set_proposal_changes(
+    changes: Vec<RuleSetProposalChange>,
+) -> Result<Vec<RuleSetProposalChange>> {
+    let mut cleaned = Vec::new();
+    for change in changes {
+        cleaned.push(clean_rule_set_proposal_change(change)?);
+    }
+
+    if cleaned.is_empty() {
+        cleaned.push(RuleSetProposalChange {
+            action: RuleSetProposalAction::NoChange,
+            rule_id: None,
+            status: None,
+            priority: None,
+            title: None,
+            instruction: None,
+            rationale: "No rule-set change is currently justified.".into(),
+            evidence_storage_keys: Vec::new(),
+            examples: RuleExamples::default(),
+        });
+    }
+
+    Ok(cleaned)
+}
+
+fn clean_rule_set_proposal_change(change: RuleSetProposalChange) -> Result<RuleSetProposalChange> {
+    let rule_id = change.rule_id.as_deref().map(clean_rule_id).transpose()?;
+    let status = change
+        .status
+        .as_deref()
+        .map(clean_rule_status)
+        .transpose()?;
+    let title = match change.title {
+        Some(title) => Some(required_clean_text(&title, "title")?),
+        None => None,
+    };
+    let instruction = match change.instruction {
+        Some(instruction) => Some(required_clean_text(&instruction, "instruction")?),
+        None => None,
+    };
+    let rationale = clean_optional(Some(&change.rationale))
+        .unwrap_or_else(|| "Rule-set proposal generated from feedback.".into());
+    let mut evidence_storage_keys = Vec::new();
+    for key in change.evidence_storage_keys {
+        let Some(key) = clean_optional(Some(&key)) else {
+            continue;
+        };
+        if !evidence_storage_keys.contains(&key) {
+            evidence_storage_keys.push(key);
+        }
+    }
+    let examples = clean_examples(change.examples);
+
+    match change.action {
+        RuleSetProposalAction::CreateRule => {
+            if title.is_none() {
+                return Err(StorageError::InvalidInput(
+                    "createRule proposals require title".into(),
+                ));
+            }
+            if instruction.is_none() {
+                return Err(StorageError::InvalidInput(
+                    "createRule proposals require instruction".into(),
+                ));
+            }
+        }
+        RuleSetProposalAction::UpdateRule | RuleSetProposalAction::DisableRule => {
+            if rule_id.is_none() {
+                return Err(StorageError::InvalidInput(format!(
+                    "{:?} proposals require ruleId",
+                    change.action
+                )));
+            }
+        }
+        RuleSetProposalAction::NoChange => {}
+    }
+
+    Ok(RuleSetProposalChange {
+        action: change.action,
+        rule_id,
+        status,
+        priority: change.priority,
+        title,
+        instruction,
+        rationale,
+        evidence_storage_keys,
+        examples,
+    })
+}
+
 fn generated_rule_id(title: &str, instruction: &str, now_unix_ms: i64) -> String {
     let slug = rule_slug(title);
     let hash = stable_hash(&format!("{title}\n{instruction}\n{now_unix_ms}"));
     format!("x-{slug}-{:08x}", hash as u32)
+}
+
+fn generated_rule_set_proposal_id(
+    source: &str,
+    feedback_count: usize,
+    active_rule_count: usize,
+    changes_json: &str,
+    now_unix_ms: i64,
+) -> String {
+    let hash = stable_hash(&format!(
+        "{source}\n{feedback_count}\n{active_rule_count}\n{changes_json}\n{now_unix_ms}"
+    ));
+    format!("x-rule-proposal-{now_unix_ms}-{hash:08x}")
 }
 
 fn rule_slug(title: &str) -> String {

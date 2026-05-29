@@ -145,6 +145,82 @@ pub(super) fn print_rule_suggestions(value: &Value) {
     }
 }
 
+pub(super) fn print_rule_set_proposals(value: &Value) {
+    print_page_header("rule proposals", value);
+    println!(
+        "{:<36} {:<10} {:<24} {:>8} {:>8} {:>8}",
+        "ID", "STATUS", "SOURCE", "FEEDBACK", "RULES", "CHANGES"
+    );
+    for item in value_items(value) {
+        println!(
+            "{:<36} {:<10} {:<24} {:>8} {:>8} {:>8}",
+            truncate(value_str(item, "id").unwrap_or(""), 36),
+            value_str(item, "status").unwrap_or(""),
+            truncate(value_str(item, "source").unwrap_or(""), 24),
+            value_usize(item, "feedbackCount")
+                .map(|value| value.to_string())
+                .unwrap_or_default(),
+            value_usize(item, "activeRuleCount")
+                .map(|value| value.to_string())
+                .unwrap_or_default(),
+            item.get("changes")
+                .and_then(Value::as_array)
+                .map(|changes| changes.len().to_string())
+                .unwrap_or_default()
+        );
+    }
+}
+
+pub(super) fn print_rule_set_proposal(value: &Value) {
+    let proposal = value.get("proposal").unwrap_or(value);
+    println!("proposal: {}", value_str(proposal, "id").unwrap_or(""));
+    println!("site: {}", value_str(value, "site").unwrap_or(""));
+    println!("status: {}", value_str(proposal, "status").unwrap_or(""));
+    println!("source: {}", value_str(proposal, "source").unwrap_or(""));
+    println!(
+        "feedback: {}, active rules: {}",
+        value_usize(proposal, "feedbackCount").unwrap_or(0),
+        value_usize(proposal, "activeRuleCount").unwrap_or(0)
+    );
+
+    let changes = proposal
+        .get("changes")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or(&[]);
+    if changes.is_empty() {
+        println!("changes: none");
+        return;
+    }
+
+    println!("changes:");
+    for change in changes {
+        let action = value_str(change, "action").unwrap_or("");
+        let rule_id = value_str(change, "ruleId").unwrap_or("");
+        let title = value_str(change, "title").unwrap_or("");
+        println!("  - {action} {rule_id}");
+        if !title.is_empty() {
+            println!("    title: {title}");
+        }
+        if let Some(priority) = value_i64(change, "priority") {
+            println!("    priority: {priority}");
+        }
+        if let Some(status) = value_str(change, "status") {
+            println!("    status: {status}");
+        }
+        println!(
+            "    rationale: {}",
+            value_str(change, "rationale").unwrap_or("")
+        );
+        let evidence = value_string_array(change, "evidenceStorageKeys");
+        if !evidence.is_empty() {
+            println!("    evidence: {}", evidence.join(", "));
+        }
+        let examples = change.get("examples").unwrap_or(&Value::Null);
+        print_string_array("    positive examples", examples.get("positive"));
+    }
+}
+
 pub(super) fn print_content(value: &Value) {
     print_page_header("content", value);
     println!("{:<28} {:<18} {:>5}  TEXT", "STORAGE KEY", "AUTHOR", "SEEN");

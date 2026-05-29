@@ -43,6 +43,14 @@ pub fn router() -> Result<Router, StorageError> {
         .route("/v1/content/stats", get(content::content_stats))
         .route("/v1/feedback", get(feedback::feedback))
         .route("/v1/dislikes", get(feedback::feedback))
+        .route(
+            "/v1/rule-proposals",
+            get(rules::rule_set_proposals).post(rules::create_rule_set_proposal),
+        )
+        .route(
+            "/v1/rule-proposals/{proposal_id}",
+            get(rules::rule_set_proposal),
+        )
         .route("/v1/rule-suggestions", get(rules::rule_suggestions))
         .route("/v1/rules", get(rules::rules).post(rules::create_rule))
         .route(

@@ -1,7 +1,10 @@
 mod codex_app;
 mod summary_cache;
 
-use crate::{core::ContentItem, storage::ContentRule};
+use crate::{
+    core::ContentItem,
+    storage::{ContentRule, RuleSetProposalChange, XDislikedPost},
+};
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex},
@@ -119,6 +122,25 @@ impl AiAnalyzer {
         }
 
         Some(opinions)
+    }
+
+    /// Gets a Codex-generated proposal for reconciling X rules with feedback.
+    pub async fn x_rule_set_proposal(
+        &self,
+        feedback: &[XDislikedPost],
+        active_rules: &[ContentRule],
+    ) -> Option<Vec<RuleSetProposalChange>> {
+        let Some(codex_app) = self.codex_app.as_ref() else {
+            return None;
+        };
+
+        match codex_app.x_rule_set_proposal(feedback, active_rules).await {
+            Ok(changes) => Some(changes),
+            Err(error) => {
+                warn!(%error, "codex app-server rule proposal unavailable");
+                None
+            }
+        }
     }
 
     #[cfg(test)]
