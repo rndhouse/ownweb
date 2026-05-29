@@ -1,0 +1,45 @@
+site_name: WebLayer Docs
+site_url: https://rndhouse.github.io/weblayer/
+repo_url: https://github.com/rndhouse/weblayer
+repo_name: rndhouse/weblayer
+edit_uri: edit/main/docs/
+strict: true
+
+theme:
+  name: material
+  features:
+    - content.code.copy
+    - navigation.sections
+    - navigation.tracking
+    - search.highlight
+    - search.suggest
+  palette:
+    - scheme: default
+      primary: black
+      accent: teal
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - scheme: slate
+      primary: black
+      accent: teal
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+
+nav:
+  - Overview: index.md
+  - Installation: installation.md
+  - Local Daemon: local-daemon.md
+  - CLI: cli.md
+  - Chrome Extension: chrome-extension.md
+  - Rules: rules.md
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.superfences

@@ -8,6 +8,10 @@ WebLayer helps you take sovereignty over the web you consume. It sends page cont
   <img src="assets/architecture.svg" alt="Browser to WebLayer extension to WebLayer daemon, with an AI agent and content store connected to the daemon" width="720">
 </p>
 
+## Documentation
+
+Documentation is published at <https://rndhouse.github.io/weblayer/>.
+
 ## Supported Sites
 
 ### X.com
