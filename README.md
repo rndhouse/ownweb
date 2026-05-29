@@ -8,22 +8,6 @@ WebLayer helps you take sovereignty over the web you consume. It sends page cont
   <img src="assets/architecture.svg" alt="Browser to WebLayer extension to WebLayer daemon, with an AI agent and content store connected to the daemon" width="720">
 </p>
 
-## Usage
-
-WebLayer builds as one `weblayer` binary. Start the local daemon with:
-
-```sh
-cargo run --manifest-path weblayer/Cargo.toml -- daemon
-```
-
-After the daemon is running, use the same binary as a CLI client:
-
-```sh
-cargo run --manifest-path weblayer/Cargo.toml -- status
-cargo run --manifest-path weblayer/Cargo.toml -- rules list --site x.com
-cargo run --manifest-path weblayer/Cargo.toml -- content stats --site x.com
-```
-
 ## Supported Sites
 
 ### X.com
