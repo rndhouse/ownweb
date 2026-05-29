@@ -83,7 +83,7 @@ async fn codex_rule_proposal_from_local_data_copy() -> TestResult<()> {
     }
 
     let proposal = daemon.agent_rule_proposal(1, 20).await?;
-    assert_proposal_invariants(&proposal, feedback_count.min(20))?;
+    assert_proposal_invariants(&proposal, feedback_count.min(10))?;
     assert_eq!(proposal["proposal"]["source"], json!("agent:codex-app"));
 
     let rule_stats = rule_decision_stats(daemon.data_dir_path())?;

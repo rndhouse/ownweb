@@ -1,4 +1,4 @@
-use super::AppState;
+use super::{rule_curation, AppState};
 use crate::{
     core::{DomAnalysisBatch, DomCommand, DomElementSnapshot, FeedbackKind, PageSnapshot},
     sites,
@@ -16,9 +16,10 @@ pub(super) async fn analyze_dom(
         log_dom_batch(&batch);
     }
 
-    Json(DomAnalyzeResponse {
-        commands: sites::analyze_dom(&batch, &state.ai_analyzer, &state.content_store).await,
-    })
+    let commands = sites::analyze_dom(&batch, &state.ai_analyzer, &state.content_store).await;
+    rule_curation::schedule_x_rule_curation(state);
+
+    Json(DomAnalyzeResponse { commands })
 }
 
 pub(super) async fn dom_feedback(
@@ -40,15 +41,16 @@ pub(super) async fn dom_feedback(
         log_dom_batch(&batch);
     }
 
-    Ok(Json(DomFeedbackResponse {
-        commands: sites::apply_feedback(
-            &batch,
-            feedback,
-            reason.as_str(),
-            feedback_context_id.as_str(),
-            &state.content_store,
-        )?,
-    }))
+    let commands = sites::apply_feedback(
+        &batch,
+        feedback,
+        reason.as_str(),
+        feedback_context_id.as_str(),
+        &state.content_store,
+    )?;
+    rule_curation::schedule_x_rule_curation(state);
+
+    Ok(Json(DomFeedbackResponse { commands }))
 }
 
 pub(super) fn log_dom_batch(batch: &DomAnalysisBatch) {

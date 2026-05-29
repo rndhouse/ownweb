@@ -23,6 +23,7 @@ pub(super) async fn feedback(
     let page = match site {
         SiteScope::XCom => state.content_store.x_dislikes(XDislikeQuery {
             active,
+            unprocessed: None,
             limit,
             offset,
         })?,

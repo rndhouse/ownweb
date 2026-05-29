@@ -1,4 +1,4 @@
-use super::{dom, AppState};
+use super::{dom, rule_curation, AppState};
 use crate::{
     core::{DomAnalysisBatch, DomCommand},
     sites,
@@ -87,6 +87,7 @@ async fn handle_client_event(
             if let Some(commands) =
                 sites::cached_dom_commands(&batch, &state.ai_analyzer, &state.content_store)
             {
+                rule_curation::schedule_x_rule_curation(state);
                 let _ = event_sender.send(ServerEvent::commands(
                     request_id,
                     AnalysisPhase::Final,
@@ -105,6 +106,7 @@ async fn handle_client_event(
             tokio::spawn(async move {
                 let commands =
                     sites::analyze_dom(&batch, &state.ai_analyzer, &state.content_store).await;
+                rule_curation::schedule_x_rule_curation(state);
                 let _ = final_sender.send(ServerEvent::commands(
                     request_id,
                     AnalysisPhase::Final,

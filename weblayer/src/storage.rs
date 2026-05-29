@@ -36,6 +36,8 @@ pub struct XFeedbackState {
 pub struct XDislikeQuery {
     /// Whether to filter by current active dislike state.
     pub active: Option<bool>,
+    /// Whether to filter by rule-curation processing state.
+    pub unprocessed: Option<bool>,
     /// Maximum number of rows to return.
     pub limit: usize,
     /// Number of matching rows to skip.
@@ -120,6 +122,20 @@ pub struct RuleDecisionStats {
     pub matched_count: usize,
     /// Number of final hide decisions where this rule matched.
     pub hide_count: usize,
+}
+
+/// Queue and browsing counters used to decide when rule curation should run.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RuleCurationStatus {
+    /// Active feedback rows that have not been considered by a rule proposal.
+    pub unprocessed_feedback_count: usize,
+    /// Current total X post encounters stored by the daemon.
+    pub total_encounters: usize,
+    /// Total encounters recorded after the last rule curation run.
+    pub last_run_total_encounters: usize,
+    /// New post encounters since the last rule curation run.
+    pub encounters_since_last_run: usize,
 }
 
 /// Query options for listing or searching stored content.
@@ -697,6 +713,41 @@ impl ContentStore {
             .lock()
             .expect("X storage mutex should not be poisoned");
         db.dislikes(query)
+    }
+
+    /// Returns queue and encounter counters for automatic X rule curation.
+    pub fn x_rule_curation_status(&self) -> Result<RuleCurationStatus> {
+        let db = self
+            .x_com
+            .lock()
+            .expect("X storage mutex should not be poisoned");
+        db.rule_curation_status()
+    }
+
+    /// Marks active X feedback rows as considered by one rule-set proposal.
+    pub fn x_mark_feedback_considered_by_proposal(
+        &self,
+        storage_keys: &[String],
+        proposal_id: &str,
+    ) -> Result<usize> {
+        let mut db = self
+            .x_com
+            .lock()
+            .expect("X storage mutex should not be poisoned");
+        db.mark_feedback_considered_by_proposal(storage_keys, proposal_id)
+    }
+
+    /// Records the current encounter counter after one X rule curation run.
+    pub fn x_record_rule_curation_run(
+        &self,
+        proposal_id: &str,
+        total_encounters: usize,
+    ) -> Result<()> {
+        let mut db = self
+            .x_com
+            .lock()
+            .expect("X storage mutex should not be poisoned");
+        db.record_rule_curation_run(proposal_id, total_encounters)
     }
 
     /// Lists stored X/Twitter content rules.

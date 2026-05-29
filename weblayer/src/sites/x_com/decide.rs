@@ -6,6 +6,8 @@ use crate::{
 use std::collections::HashMap;
 use tracing::warn;
 
+const ACTIVE_RULE_CONTEXT_LIMIT: usize = 20;
+
 pub(super) fn record_feedback(
     content_store: &ContentStore,
     items: &[ContentItem],
@@ -166,7 +168,8 @@ pub(super) fn cached_decide_items(
 pub(super) fn active_x_rules(content_store: &ContentStore) -> Vec<AiContentRule> {
     match content_store.x_rules(RuleQuery {
         status: Some("active".into()),
-        ..RuleQuery::default()
+        limit: ACTIVE_RULE_CONTEXT_LIMIT,
+        offset: 0,
     }) {
         Ok(page) => page.items.into_iter().map(AiContentRule::from).collect(),
         Err(error) => {

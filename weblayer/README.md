@@ -117,6 +117,12 @@ Opinions are cached in memory by X status ID, a normalized fallback key, and the
 active rule set. This lets the timeline view and single-post view reuse the same
 AI decision when they capture the same post content under the same policy.
 
+Post evaluation and rule curation both send at most 20 active rules to Codex.
+Rule curation uses at most 10 unprocessed feedback rows per proposal. The daemon
+automatically creates a pending rule-set proposal when 10 active feedback rows
+are queued, or when at least one queued feedback row exists and 20 more post
+encounters have been stored since the last curation run.
+
 Cache hits and X posts sent to the Codex app-server are logged at debug level
 on stdout. Repeated full captured post payloads from DOM extraction are logged
 at trace level.

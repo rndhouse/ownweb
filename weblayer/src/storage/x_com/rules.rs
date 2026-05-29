@@ -315,6 +315,7 @@ impl Store {
         let offset = query.offset.min(i64::MAX as usize);
         let page = self.dislikes(XDislikeQuery {
             active: Some(true),
+            unprocessed: None,
             limit: 500,
             offset: 0,
         })?;

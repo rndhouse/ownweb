@@ -5,7 +5,7 @@ use super::{
 };
 use crate::{
     core::{ContentItem, FeedbackContext, FeedbackKind},
-    storage::{XDislikePage, XDislikeQuery, XDislikedPost},
+    storage::{RuleCurationStatus, XDislikePage, XDislikeQuery, XDislikedPost},
 };
 use rusqlite::{params, OptionalExtension};
 use serde::Serialize;
@@ -142,7 +142,9 @@ impl Store {
                 author_handle = COALESCE(excluded.author_handle, tweet_feedback_state.author_handle),
                 latest_captured_at = excluded.latest_captured_at,
                 latest_payload_json = excluded.latest_payload_json,
-                latest_rule_context_json = excluded.latest_rule_context_json
+                latest_rule_context_json = excluded.latest_rule_context_json,
+                rule_proposal_id = NULL,
+                rule_proposal_at_unix_ms = NULL
             ",
             params![
                 record.storage_key,
@@ -207,6 +209,7 @@ impl Store {
 
     pub(in crate::storage) fn dislikes(&self, query: XDislikeQuery) -> Result<XDislikePage> {
         let active = query.active.map(bool_to_sqlite_int);
+        let unprocessed = query.unprocessed.map(bool_to_sqlite_int);
         let limit = sqlite_limit(query.limit);
         let offset = sqlite_limit(query.offset);
         let total_matching = self.connection.query_row(
@@ -214,8 +217,13 @@ impl Store {
             SELECT COUNT(*)
             FROM tweet_feedback_state
             WHERE (?1 IS NULL OR active = ?1)
+                AND (
+                    ?2 IS NULL
+                    OR (?2 = 1 AND rule_proposal_id IS NULL)
+                    OR (?2 = 0 AND rule_proposal_id IS NOT NULL)
+                )
             ",
-            [active],
+            params![active, unprocessed],
             |row| row.get::<_, i64>(0),
         )?;
 
@@ -240,12 +248,20 @@ impl Store {
             FROM tweet_feedback_state state
             LEFT JOIN tweets ON tweets.storage_key = state.storage_key
             WHERE (?1 IS NULL OR state.active = ?1)
-            ORDER BY state.updated_at_unix_ms DESC, state.storage_key ASC
-            LIMIT ?2 OFFSET ?3
+                AND (
+                    ?2 IS NULL
+                    OR (?2 = 1 AND state.rule_proposal_id IS NULL)
+                    OR (?2 = 0 AND state.rule_proposal_id IS NOT NULL)
+                )
+            ORDER BY
+                CASE WHEN ?2 = 1 THEN state.updated_at_unix_ms END ASC,
+                CASE WHEN ?2 IS NULL OR ?2 != 1 THEN state.updated_at_unix_ms END DESC,
+                state.storage_key ASC
+            LIMIT ?3 OFFSET ?4
             ",
         )?;
         let items = statement
-            .query_map(params![active, limit, offset], |row| {
+            .query_map(params![active, unprocessed, limit, offset], |row| {
                 let active: i64 = row.get(6)?;
                 Ok(XDislikedPost {
                     storage_key: row.get(0)?,
@@ -273,6 +289,109 @@ impl Store {
             offset: offset as usize,
             items,
         })
+    }
+
+    pub(in crate::storage) fn rule_curation_status(&self) -> Result<RuleCurationStatus> {
+        let unprocessed_feedback_count = self.connection.query_row(
+            "
+            SELECT COUNT(*)
+            FROM tweet_feedback_state
+            WHERE active = 1 AND rule_proposal_id IS NULL
+            ",
+            [],
+            |row| row.get::<_, i64>(0),
+        )?;
+        let total_encounters = self.connection.query_row(
+            "
+            SELECT COALESCE(SUM(seen_count), 0)
+            FROM tweets
+            ",
+            [],
+            |row| row.get::<_, i64>(0),
+        )?;
+        let last_run_total_encounters = self
+            .connection
+            .query_row(
+                "
+                SELECT last_total_encounters
+                FROM rule_curation_state
+                WHERE site = ?1
+                ",
+                [SITE_DIR],
+                |row| row.get::<_, i64>(0),
+            )
+            .optional()?
+            .unwrap_or(0);
+
+        let total_encounters = total_encounters.max(0) as usize;
+        let last_run_total_encounters = last_run_total_encounters.max(0) as usize;
+
+        Ok(RuleCurationStatus {
+            unprocessed_feedback_count: unprocessed_feedback_count.max(0) as usize,
+            total_encounters,
+            last_run_total_encounters,
+            encounters_since_last_run: total_encounters.saturating_sub(last_run_total_encounters),
+        })
+    }
+
+    pub(in crate::storage) fn mark_feedback_considered_by_proposal(
+        &mut self,
+        storage_keys: &[String],
+        proposal_id: &str,
+    ) -> Result<usize> {
+        let Some(proposal_id) = clean_optional(Some(proposal_id)) else {
+            return Ok(0);
+        };
+        let now = now_unix_ms();
+        let transaction = self.connection.transaction()?;
+        let mut updated = 0usize;
+
+        for storage_key in storage_keys {
+            let Some(storage_key) = clean_optional(Some(storage_key.as_str())) else {
+                continue;
+            };
+            updated += transaction.execute(
+                "
+                UPDATE tweet_feedback_state
+                SET rule_proposal_id = ?1,
+                    rule_proposal_at_unix_ms = ?2
+                WHERE storage_key = ?3 AND active = 1
+                ",
+                params![proposal_id.as_str(), now, storage_key],
+            )?;
+        }
+
+        transaction.commit()?;
+        Ok(updated)
+    }
+
+    pub(in crate::storage) fn record_rule_curation_run(
+        &mut self,
+        proposal_id: &str,
+        total_encounters: usize,
+    ) -> Result<()> {
+        let Some(proposal_id) = clean_optional(Some(proposal_id)) else {
+            return Ok(());
+        };
+        let now = now_unix_ms();
+
+        self.connection.execute(
+            "
+            INSERT INTO rule_curation_state (
+                site,
+                last_proposal_id,
+                last_run_at_unix_ms,
+                last_total_encounters
+            ) VALUES (?1, ?2, ?3, ?4)
+            ON CONFLICT(site) DO UPDATE SET
+                last_proposal_id = excluded.last_proposal_id,
+                last_run_at_unix_ms = excluded.last_run_at_unix_ms,
+                last_total_encounters = excluded.last_total_encounters
+            ",
+            params![SITE_DIR, proposal_id.as_str(), now, total_encounters as i64],
+        )?;
+
+        Ok(())
     }
 }
 

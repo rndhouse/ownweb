@@ -20,6 +20,9 @@ const DEFAULT_CONTENT_LIMIT: usize = 100;
 const MAX_CONTENT_LIMIT: usize = 500;
 const DEFAULT_RULE_LIMIT: usize = 100;
 const MAX_RULE_LIMIT: usize = 500;
+const AGENT_ACTIVE_RULE_LIMIT: usize = 20;
+const DEFAULT_RULE_PROPOSAL_FEEDBACK_LIMIT: usize = 10;
+const MAX_RULE_PROPOSAL_FEEDBACK_LIMIT: usize = 10;
 
 pub(super) async fn create_rule_set_proposal(
     State(state): State<AppState>,
@@ -30,32 +33,45 @@ pub(super) async fn create_rule_set_proposal(
     let min_feedback = request.min_feedback.unwrap_or(1).max(1);
     let feedback_limit = request
         .feedback_limit
-        .unwrap_or(DEFAULT_RULE_LIMIT)
-        .min(MAX_RULE_LIMIT);
-
-    let (feedback, active_rules, rule_stats) = match site {
+        .unwrap_or(DEFAULT_RULE_PROPOSAL_FEEDBACK_LIMIT)
+        .min(MAX_RULE_PROPOSAL_FEEDBACK_LIMIT);
+    let proposal = match site {
         SiteScope::XCom => {
-            let feedback = state
-                .content_store
-                .x_dislikes(XDislikeQuery {
-                    active: Some(true),
-                    limit: feedback_limit,
-                    offset: 0,
-                })?
-                .items;
-            let active_rules = state
-                .content_store
-                .x_rules(RuleQuery {
-                    status: Some("active".into()),
-                    limit: MAX_RULE_LIMIT,
-                    offset: 0,
-                })?
-                .items;
-            let rule_stats = state.content_store.x_rule_decision_stats()?;
-            (feedback, active_rules, rule_stats)
+            generate_x_rule_set_proposal(&state, min_feedback, feedback_limit).await?
         }
     };
 
+    Ok(Json(RuleSetProposalMutationResponse {
+        site: site.as_str(),
+        proposal,
+    }))
+}
+
+pub(super) async fn generate_x_rule_set_proposal(
+    state: &AppState,
+    min_feedback: usize,
+    feedback_limit: usize,
+) -> Result<RuleSetProposal, ApiError> {
+    let min_feedback = min_feedback.max(1);
+    let feedback_limit = feedback_limit.min(MAX_RULE_PROPOSAL_FEEDBACK_LIMIT);
+    let feedback = state
+        .content_store
+        .x_dislikes(XDislikeQuery {
+            active: Some(true),
+            unprocessed: Some(true),
+            limit: feedback_limit,
+            offset: 0,
+        })?
+        .items;
+    let active_rules = state
+        .content_store
+        .x_rules(RuleQuery {
+            status: Some("active".into()),
+            limit: AGENT_ACTIVE_RULE_LIMIT,
+            offset: 0,
+        })?
+        .items;
+    let rule_stats = state.content_store.x_rule_decision_stats()?;
     let (source, changes) = if feedback.len() < min_feedback {
         (
             "feedback:insufficient".to_string(),
@@ -71,38 +87,42 @@ pub(super) async fn create_rule_set_proposal(
     {
         ("agent:codex-app".to_string(), changes)
     } else {
-        let suggestions = match site {
-            SiteScope::XCom => state
-                .content_store
-                .x_rule_suggestions(RuleSuggestionQuery {
-                    min_feedback,
-                    limit: feedback_limit,
-                    offset: 0,
-                })?,
-        };
+        let suggestions = state
+            .content_store
+            .x_rule_suggestions(RuleSuggestionQuery {
+                min_feedback,
+                limit: feedback_limit,
+                offset: 0,
+            })?;
         (
             "heuristic:feedback-reasons".to_string(),
             heuristic_changes_from_suggestions(suggestions.items, &active_rules),
         )
     };
 
-    let proposal = match site {
-        SiteScope::XCom => {
-            state
-                .content_store
-                .x_create_rule_set_proposal(RuleSetProposalCreateInput {
-                    source,
-                    feedback_count: feedback.len(),
-                    active_rule_count: active_rules.len(),
-                    changes,
-                })?
-        }
-    };
+    let proposal = state
+        .content_store
+        .x_create_rule_set_proposal(RuleSetProposalCreateInput {
+            source,
+            feedback_count: feedback.len(),
+            active_rule_count: active_rules.len(),
+            changes,
+        })?;
+    if feedback.len() >= min_feedback {
+        let feedback_storage_keys = feedback
+            .iter()
+            .map(|item| item.storage_key.clone())
+            .collect::<Vec<_>>();
+        state
+            .content_store
+            .x_mark_feedback_considered_by_proposal(&feedback_storage_keys, &proposal.id)?;
+        let total_encounters = state.content_store.x_content_stats()?.total_encounters;
+        state
+            .content_store
+            .x_record_rule_curation_run(&proposal.id, total_encounters)?;
+    }
 
-    Ok(Json(RuleSetProposalMutationResponse {
-        site: site.as_str(),
-        proposal,
-    }))
+    Ok(proposal)
 }
 
 pub(super) async fn rule_set_proposals(
@@ -484,7 +504,7 @@ pub(super) struct UpdateRuleStatusRequest {
 pub(super) struct CreateRuleSetProposalRequest {
     /// Minimum active feedback rows required before proposing rule changes.
     min_feedback: Option<usize>,
-    /// Maximum active feedback rows to send to proposal generation.
+    /// Maximum active feedback rows to send to proposal generation. Capped at 10.
     feedback_limit: Option<usize>,
 }
 

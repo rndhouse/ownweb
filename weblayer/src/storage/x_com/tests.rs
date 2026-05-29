@@ -348,6 +348,7 @@ fn records_feedback_rule_context_for_x_post() {
     let page = store
         .dislikes(XDislikeQuery {
             active: Some(true),
+            unprocessed: None,
             limit: 10,
             offset: 0,
         })
@@ -535,6 +536,7 @@ fn lists_x_dislikes_with_feedback_state_and_post_content() {
     let active_page = store
         .dislikes(XDislikeQuery {
             active: Some(true),
+            unprocessed: None,
             limit: 100,
             offset: 0,
         })
@@ -542,6 +544,7 @@ fn lists_x_dislikes_with_feedback_state_and_post_content() {
     let inactive_page = store
         .dislikes(XDislikeQuery {
             active: Some(false),
+            unprocessed: None,
             limit: 100,
             offset: 0,
         })
@@ -559,6 +562,94 @@ fn lists_x_dislikes_with_feedback_state_and_post_content() {
     assert_eq!(inactive_page.items.len(), 1);
     assert_eq!(inactive_page.items[0].post_id.as_deref(), Some("456"));
     assert!(!inactive_page.items[0].active);
+
+    let _ = std::fs::remove_dir_all(db_path.parent().unwrap().parent().unwrap());
+}
+
+#[test]
+fn tracks_rule_curation_feedback_queue() {
+    let db_path = temp_db_path("rule-curation-queue");
+    let mut store = Store::open(&db_path).expect("store should open");
+    let first = item("client-1", Some("123"), "first disliked post");
+    let second = item("client-2", Some("456"), "second disliked post");
+
+    store
+        .record_batch(&batch("x.com", vec![first.clone(), second.clone()]))
+        .expect("batch should store");
+    store
+        .record_feedback_with_context(
+            &first,
+            FeedbackKind::ThumbsDown,
+            "low information",
+            &feedback_context(),
+        )
+        .expect("first feedback should store");
+    store
+        .record_feedback_with_context(
+            &second,
+            FeedbackKind::ThumbsDown,
+            "spam",
+            &feedback_context(),
+        )
+        .expect("second feedback should store");
+
+    let status = store
+        .rule_curation_status()
+        .expect("curation status should load");
+    assert_eq!(status.unprocessed_feedback_count, 2);
+    assert_eq!(status.total_encounters, 2);
+    assert_eq!(status.encounters_since_last_run, 2);
+
+    let updated = store
+        .mark_feedback_considered_by_proposal(&["x:id:123".into()], "proposal-1")
+        .expect("feedback should mark");
+    assert_eq!(updated, 1);
+    assert_eq!(
+        store
+            .rule_curation_status()
+            .expect("curation status should load")
+            .unprocessed_feedback_count,
+        1
+    );
+    assert_eq!(
+        store
+            .dislikes(XDislikeQuery {
+                active: Some(true),
+                unprocessed: Some(false),
+                limit: 10,
+                offset: 0,
+            })
+            .expect("processed feedback should load")
+            .total_matching,
+        1
+    );
+
+    store
+        .record_rule_curation_run("proposal-1", 2)
+        .expect("curation run should record");
+    assert_eq!(
+        store
+            .rule_curation_status()
+            .expect("curation status should load")
+            .encounters_since_last_run,
+        0
+    );
+
+    store
+        .record_feedback_with_context(
+            &first,
+            FeedbackKind::UpdateReason,
+            "still low information",
+            &feedback_context(),
+        )
+        .expect("updated feedback should store");
+    assert_eq!(
+        store
+            .rule_curation_status()
+            .expect("curation status should load")
+            .unprocessed_feedback_count,
+        2
+    );
 
     let _ = std::fs::remove_dir_all(db_path.parent().unwrap().parent().unwrap());
 }

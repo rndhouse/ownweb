@@ -4,6 +4,7 @@ mod error;
 mod events;
 mod feedback;
 mod input;
+mod rule_curation;
 mod rules;
 mod site;
 
@@ -17,7 +18,8 @@ use axum::{
     Json, Router,
 };
 use serde::Serialize;
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
+use tokio::sync::Mutex;
 use tower_http::cors::{Any, CorsLayer};
 
 const LOG_CAPTURED_CONTENT_ENV: &str = "WEBLAYER_LOG_CAPTURED_CONTENT";
@@ -28,6 +30,7 @@ pub fn router() -> Result<Router, StorageError> {
         ai_analyzer: AiAnalyzer::from_env(),
         content_store: ContentStore::from_env()?,
         log_captured_content: captured_content_logging_enabled(),
+        rule_curation: Arc::new(Mutex::new(())),
     };
 
     Ok(Router::new()
@@ -97,6 +100,7 @@ struct AppState {
     ai_analyzer: AiAnalyzer,
     content_store: ContentStore,
     log_captured_content: bool,
+    rule_curation: Arc<Mutex<()>>,
 }
 
 fn env_flag_default(name: &str, default: bool) -> bool {

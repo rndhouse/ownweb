@@ -84,13 +84,17 @@ pub(super) fn initialize(connection: &Connection) -> Result<()> {
         author_handle TEXT,
         latest_captured_at TEXT,
         latest_payload_json TEXT NOT NULL,
-        latest_rule_context_json TEXT NOT NULL
+        latest_rule_context_json TEXT NOT NULL,
+        rule_proposal_id TEXT,
+        rule_proposal_at_unix_ms INTEGER
     );
 
     CREATE INDEX IF NOT EXISTS tweet_feedback_state_active_idx
         ON tweet_feedback_state(active);
     CREATE INDEX IF NOT EXISTS tweet_feedback_state_post_id_idx
         ON tweet_feedback_state(post_id);
+    CREATE INDEX IF NOT EXISTS tweet_feedback_state_rule_proposal_idx
+        ON tweet_feedback_state(rule_proposal_id);
 
     CREATE TABLE IF NOT EXISTS feedback_contexts (
         id TEXT PRIMARY KEY,
@@ -142,6 +146,13 @@ pub(super) fn initialize(connection: &Connection) -> Result<()> {
     CREATE INDEX IF NOT EXISTS rule_set_proposals_status_time_idx
         ON rule_set_proposals(status, created_at_unix_ms);
 
+    CREATE TABLE IF NOT EXISTS rule_curation_state (
+        site TEXT PRIMARY KEY,
+        last_proposal_id TEXT,
+        last_run_at_unix_ms INTEGER,
+        last_total_encounters INTEGER NOT NULL DEFAULT 0
+    );
+
     CREATE TABLE IF NOT EXISTS content_annotations (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         storage_key TEXT NOT NULL,
@@ -168,8 +179,26 @@ pub(super) fn initialize(connection: &Connection) -> Result<()> {
     ",
     )?;
     migrate_feedback_context(connection)?;
+    migrate_rule_curation(connection)?;
     migrate_search(connection)?;
     rules::seed_default_rules(connection)?;
+
+    Ok(())
+}
+
+fn migrate_rule_curation(connection: &Connection) -> Result<()> {
+    ensure_column(
+        connection,
+        "tweet_feedback_state",
+        "rule_proposal_id",
+        "ALTER TABLE tweet_feedback_state ADD COLUMN rule_proposal_id TEXT",
+    )?;
+    ensure_column(
+        connection,
+        "tweet_feedback_state",
+        "rule_proposal_at_unix_ms",
+        "ALTER TABLE tweet_feedback_state ADD COLUMN rule_proposal_at_unix_ms INTEGER",
+    )?;
 
     Ok(())
 }

@@ -10,7 +10,7 @@ use crate::{
         ContentItem, DecisionAction, DomAnalysisBatch, DomAttribute, DomElementSnapshot, DomLink,
         FeedbackContext, FeedbackKind, PageSnapshot,
     },
-    storage::ContentStore,
+    storage::{ContentStore, RuleCreateInput, RuleExamples},
 };
 use std::path::PathBuf;
 
@@ -318,6 +318,47 @@ fn pending_commands_install_feedback_controls_for_all_posts() {
         .feedback_context_id
         .as_deref()
         .is_some_and(|id| !id.is_empty()));
+
+    let _ = std::fs::remove_dir_all(data_dir);
+}
+
+#[test]
+fn feedback_context_includes_at_most_twenty_active_rules() {
+    let (content_store, data_dir) = content_store("feedback-context-rule-cap");
+    let ai_analyzer = AiAnalyzer::for_tests_with_x_summaries(&[]);
+    for index in 0..25 {
+        content_store
+            .x_create_rule(RuleCreateInput {
+                id: Some(format!("x-test-rule-{index:02}")),
+                status: Some("active".into()),
+                priority: Some(100 + index as i64),
+                title: format!("Test rule {index}"),
+                instruction: format!("Hide test pattern {index}."),
+                created_source: "test".into(),
+                examples: RuleExamples::default(),
+            })
+            .expect("rule should create");
+    }
+
+    let commands = pending_dom_commands(
+        &batch(vec![element(
+            "client-1",
+            "Post text",
+            Some("https://x.com/user/status/12345"),
+        )]),
+        &ai_analyzer,
+        &content_store,
+    );
+    let context_id = commands[0]
+        .feedback_context_id
+        .as_deref()
+        .expect("feedback context ID should exist");
+    let feedback_context = content_store
+        .x_feedback_context(context_id)
+        .expect("feedback context should load")
+        .expect("feedback context should exist");
+
+    assert_eq!(feedback_context.active_rules.len(), 20);
 
     let _ = std::fs::remove_dir_all(data_dir);
 }
