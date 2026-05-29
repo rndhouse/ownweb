@@ -19,7 +19,7 @@ use tracing::warn;
 const DEFAULT_WS_URL: &str = "ws://127.0.0.1:39177";
 const DEFAULT_OPINION_MODEL: &str = "gpt-5.4-mini";
 const DEFAULT_OPINION_EFFORT: &str = "low";
-const DEFAULT_OPINION_TIMEOUT_MS: u64 = 8000;
+const DEFAULT_OPINION_TIMEOUT_MS: u64 = 12000;
 const DEFAULT_RULE_PROPOSAL_MODEL: &str = "gpt-5.4-mini";
 const DEFAULT_RULE_PROPOSAL_EFFORT: &str = "medium";
 const DEFAULT_RULE_PROPOSAL_TIMEOUT_MS: u64 = 120000;
@@ -919,7 +919,7 @@ mod tests {
 
         assert_eq!(config.opinion.model, "gpt-5.4-mini");
         assert_eq!(config.opinion.effort, "low");
-        assert_eq!(config.opinion.request_timeout, Duration::from_millis(8000));
+        assert_eq!(config.opinion.request_timeout, Duration::from_millis(12000));
         assert_eq!(config.rule_proposal.model, "gpt-5.4-mini");
         assert_eq!(config.rule_proposal.effort, "medium");
         assert_eq!(
